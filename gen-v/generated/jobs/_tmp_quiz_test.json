@@ -1,0 +1,71 @@
+{
+  "topic": "10 Things Every Indian Should Know",
+  "style": "Minimal",
+  "jobId": "_tmp_quiz_test",
+  "contentType": "QUIZ_SHORTS",
+  "quizData": {
+    "hook": "Can you score 10/10 as a true Indian? Only 1% can pass Question 8.",
+    "questions": [
+      {
+        "difficulty": "easy",
+        "question": "What is the capital of India?",
+        "options": ["Mumbai", "Delhi", "Kolkata"],
+        "answer": "Delhi"
+      },
+      {
+        "difficulty": "easy",
+        "question": "Which animal is the national animal of India?",
+        "options": ["Lion", "Bengal Tiger", "Elephant"],
+        "answer": "Bengal Tiger"
+      },
+      {
+        "difficulty": "easy",
+        "question": "Which is the national fruit of India?",
+        "options": ["Mango", "Apple", "Banana"],
+        "answer": "Mango"
+      },
+      {
+        "difficulty": "medium",
+        "question": "Which state is known as the Spice Garden of India?",
+        "options": ["Karnataka", "Kerala", "Tamil Nadu"],
+        "answer": "Kerala"
+      },
+      {
+        "difficulty": "medium",
+        "question": "Who was the first President of India?",
+        "options": ["Dr. Rajendra Prasad", "Dr. B.R. Ambedkar", "Jawaharlal Nehru"],
+        "answer": "Dr. Rajendra Prasad"
+      },
+      {
+        "difficulty": "medium",
+        "question": "Which city is known as the Pink City of India?",
+        "options": ["Jodhpur", "Jaipur", "Udaipur"],
+        "answer": "Jaipur"
+      },
+      {
+        "difficulty": "hard",
+        "question": "Who was the first Indian woman to win an Olympic medal?",
+        "options": ["Karnam Malleswari", "Saina Nehwal", "Mary Kom"],
+        "answer": "Karnam Malleswari"
+      },
+      {
+        "difficulty": "hard",
+        "question": "In which year was the first Indian passenger train flagged off?",
+        "options": ["1853", "1860", "1847"],
+        "answer": "1853"
+      },
+      {
+        "difficulty": "hard",
+        "question": "Which is the largest state in India by area?",
+        "options": ["Madhya Pradesh", "Maharashtra", "Rajasthan"],
+        "answer": "Rajasthan"
+      },
+      {
+        "difficulty": "hard",
+        "question": "Who is known as the missile woman of India?",
+        "options": ["Tessy Thomas", "Kalpana Chawla", "Dr. Ritu Karidhal"],
+        "answer": "Tessy Thomas"
+      }
+    ]
+  }
+}

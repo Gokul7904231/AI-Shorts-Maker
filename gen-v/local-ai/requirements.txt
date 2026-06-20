@@ -1,0 +1,20 @@
+torch
+torchvision
+torchaudio
+
+diffusers
+transformers
+accelerate
+sentencepiece
+
+# Used by many HF pipelines
+huggingface_hub
+
+# FFmpeg wrapper (rendering uses system ffmpeg)
+imageio
+imageio-ffmpeg
+
+# Optional but often beneficial on GPUs; keep as optional install for laptop safety
+# xformers
+# bitsandbytes
+

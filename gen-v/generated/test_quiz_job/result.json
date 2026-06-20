@@ -1,0 +1,25 @@
+{
+  "jobId": "test_quiz_job",
+  "status": "completed",
+  "sceneFiles": [],
+  "finalVideo": "final.mp4",
+  "thumbnail": "thumbnail.png",
+  "subtitles": "subtitles.srt",
+  "subtitleOverlay": "WORKING",
+  "renderProfile": "FAST_QUIZ",
+  "fps": 18,
+  "resolution": "540x960",
+  "timings": {
+    "step1_images_sec": 0.0,
+    "step2_audio_sec": 195.88353610038757,
+    "step3_subtitles_sec": 0.0008764266967773438,
+    "step4_render_sec": 58.520055532455444
+  },
+  "cache": {
+    "hits": 0,
+    "misses": 0
+  },
+  "playable": true,
+  "audioDetected": true,
+  "videoDuration": 126.81999999999996
+}

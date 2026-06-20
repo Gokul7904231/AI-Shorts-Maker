@@ -1,0 +1,40 @@
+# Standalone Video Renderer Container for Quiz Shorts
+# Packaging Python 3.11, FFmpeg, ImageMagick, Edge-TTS, and MoviePy
+
+FROM python:3.11-slim
+
+# Prevent interactive prompts during installation
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONIOENCODING=utf-8
+ENV PYTHONUTF8=1
+
+# Install system dependencies: FFmpeg, ImageMagick, and build essential packages
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg \
+    imagemagick \
+    git \
+    build-essential \
+    libgl1-mesa-glx \
+    libglib2.0-0 \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Fix ImageMagick security policy to allow TextClip PDF/fonts rendering if needed
+RUN sed -i 's/domain="coder" rights="none" pattern="PDF"/domain="coder" rights="read|write" pattern="PDF"/' /etc/ImageMagick-6/policy.xml || true
+
+# Set up workspace
+WORKDIR /app
+
+# Copy python dependencies list
+COPY requirements.txt /app/requirements.txt
+
+# Install python dependencies
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
+
+# Copy hybrid-video folder to maintain relative paths structure expected by scripts
+COPY . /app/hybrid-video
+
+# Define entrypoint to run create_short.py by default
+ENTRYPOINT ["python", "/app/hybrid-video/scripts/create_short.py"]

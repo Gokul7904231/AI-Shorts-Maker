@@ -1,0 +1,17 @@
+{
+  "jobId": "_tmp_job",
+  "topic": "test topic",
+  "style": "default",
+  "script": "Hello world. This is a runtime stabilization test.",
+  "scenes": [
+    {
+      "id": 1,
+      "text": "Scene 1"
+    },
+    {
+      "id": 2,
+      "text": "Scene 2"
+    }
+  ]
+}
+

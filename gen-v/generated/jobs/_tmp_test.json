@@ -1,0 +1,13 @@
+{
+  "topic": "test",
+  "script": "Hello world.",
+  "scenes": [
+    {
+      "text": "A"
+    },
+    {
+      "text": "B"
+    }
+  ],
+  "jobId": "_tmp_test"
+}
