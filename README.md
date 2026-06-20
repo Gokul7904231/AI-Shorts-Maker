@@ -114,6 +114,9 @@ The system tracks execution duration and storage capacity dynamically. Access th
 
 ---
 
-Designed and Architected by **[Your Name]**  
-Open to Software Engineering and Cloud Architecture roles.  
-[LinkedIn] | [Portfolio]
+---
+### 👨‍💻 Let's Connect
+**Architected by Gokul A.** *Open to Software Engineering and Cloud Architecture opportunities.*
+
+[![Portfolio](https://img.shields.io/badge/Portfolio-gokul.software-000000?style=for-the-badge&logo=vercel&logoColor=white)](https://www.gokul.software/)
+[![LinkedIn](https://img.shields.io/badge/LinkedIn-Connect-0A66C2?style=for-the-badge&logo=linkedin&logoColor=white)](https://www.linkedin.com/in/gokul1234/)
