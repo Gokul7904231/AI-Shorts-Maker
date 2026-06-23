@@ -151,268 +151,244 @@ export default function AdminPage() {
   if (!mounted) return null;
 
   return (
-    <div className="min-h-screen py-10 px-4 md:px-8 max-w-4xl mx-auto flex flex-col justify-between fade-in-up font-sans">
-      {/* ── Top Nav Header ── */}
-      <div>
-        <header className="flex justify-between items-center mb-8 pb-6 border-b border-outline-variant">
-          <div className="flex items-center gap-3">
-            <span className="text-2xl">🏭</span>
-            <div>
-              <h1 className="text-xl font-black tracking-tight text-primary">
-                ShortsFactory Admin
-              </h1>
-              <p className="text-xs text-on-surface-variant font-mono">System Automation & Controls</p>
-            </div>
-          </div>
-          <Link href="/preview" className="px-4 py-2 text-xs font-semibold rounded-md border border-outline-variant text-on-surface-variant hover:text-on-surface hover:bg-surface-container transition-colors">
-            ← Dashboard
+    <div className="min-h-screen pt-8 pb-16 px-6 md:px-10 max-w-6xl mx-auto font-sans text-on-surface">
+      {/* ── Top Header ── */}
+      <header className="flex justify-between items-center mb-8">
+        <h1 className="text-xl font-bold tracking-tight">ShortsFactory Pro</h1>
+        <div className="flex items-center gap-4">
+          <Link href="/preview" className="px-3 py-1.5 text-xs font-semibold rounded bg-surface-container hover:bg-surface-container-high transition-colors text-on-surface-variant">
+            Dashboard
           </Link>
-          <Link href="/library" className="px-4 py-2 text-xs font-semibold rounded-md border border-outline-variant text-on-surface-variant hover:text-on-surface hover:bg-surface-container transition-colors">
-            🎬 Library
-          </Link>
-          <Link href="/analytics" className="px-4 py-2 text-xs font-semibold rounded-md border border-outline-variant text-on-surface-variant hover:text-on-surface hover:bg-surface-container transition-colors">
-            📊 Analytics
-          </Link>
-        </header>
-
-        {/* ── Error Banner ── */}
-        {error && (
-          <div className="mb-6 p-4 rounded-xl bg-error/10 border border-error/30 text-error text-sm flex items-center gap-2">
-            <span>⚠️</span>
-            <span>{error}</span>
+          <div className="w-8 h-8 rounded-full bg-surface-container-high flex items-center justify-center">
+            <span className="text-xs">A</span>
           </div>
-        )}
-
-        {/* ── Main Control Section ── */}
-        {loading ? (
-          <div className="bg-surface-container border border-outline-variant rounded-xl p-12 flex flex-col items-center justify-center gap-4 text-center">
-            <div className="spinner border-t-primary w-12 h-12 border-4"></div>
-            <p className="text-sm text-on-surface-variant font-mono">Syncing with Cloud Firestore...</p>
-          </div>
-        ) : (
-          <div className="grid gap-6 md:grid-cols-3">
-            {/* Kill Switch Panel (2 cols wide on medium screens) */}
-            <div className="bg-surface-container border border-outline-variant rounded-xl p-6 md:col-span-2 flex flex-col justify-between min-h-[220px]">
-              <div>
-                <div className="flex justify-between items-start mb-4">
-                  <div>
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-primary mb-1 block font-mono">Autonomous Loop Switch</span>
-                    <h2 className="text-xl font-bold text-on-surface tracking-tight">Factory Kill Switch</h2>
-                  </div>
-                  <div
-                    className={`px-3 py-1 rounded-full text-[10px] font-bold font-mono border ${
-                      isFactoryActive ? "bg-primary/10 border-primary/30 text-primary" : "bg-error/10 border-error/30 text-error"
-                    }`}
-                  >
-                    {isFactoryActive ? "🟢 ACTIVE" : "🔴 PAUSED"}
-                  </div>
-                </div>
-                <p className="text-xs text-on-surface-variant leading-relaxed max-w-md">
-                  When active, the background auto-scheduler script executes at the configured intervals, generating new Geo-Quiz shorts. If disabled, new automated generations are completely paused.
-                </p>
-              </div>
-
-              <div className="flex items-center justify-between mt-6 pt-4 border-t border-outline-variant">
-                <div className="text-left">
-                  <span className="text-[10px] text-on-surface-variant block uppercase tracking-wider font-bold">
-                    Last Toggled
-                  </span>
-                  <span className="text-xs font-mono text-on-surface">
-                    {lastUpdated || "Never"}
-                  </span>
-                </div>
-
-                <div className="flex items-center gap-3">
-                  <span className="text-xs text-on-surface-variant font-mono">
-                    {updating ? "Syncing..." : isFactoryActive ? "Running" : "Paused"}
-                  </span>
-                  <div
-                    onClick={toggleFactory}
-                    className={`relative w-14 h-7 rounded-full cursor-pointer transition-colors border border-outline-variant ${isFactoryActive ? "bg-primary border-primary" : "bg-surface-container-high"}`}
-                  >
-                    <div className={`absolute top-1 left-1 w-5 h-5 rounded-full bg-white transition-all shadow-sm ${isFactoryActive ? "translate-x-7" : ""}`}></div>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Quick Status Stats */}
-            <div className="bg-surface-container border border-outline-variant rounded-xl p-6 flex flex-col justify-between min-h-[220px]">
-              <div>
-                <span className="text-[10px] font-bold uppercase tracking-wider text-on-surface-variant mb-1 block font-mono">Loop Telemetry</span>
-                <h2 className="text-lg font-bold text-on-surface tracking-tight mb-4">Daily Output</h2>
-                
-                <div className="space-y-3 font-mono">
-                  <div className="flex justify-between text-xs">
-                    <span className="text-on-surface-variant">Scheduled:</span>
-                    <span className="font-semibold text-on-surface">10 per day</span>
-                  </div>
-                  <div className="flex justify-between text-xs">
-                    <span className="text-on-surface-variant">Interval:</span>
-                    <span className="font-semibold text-on-surface">144 mins</span>
-                  </div>
-                  <div className="flex justify-between text-xs">
-                    <span className="text-on-surface-variant">Cloud Storage:</span>
-                    <span className="font-semibold text-secondary">Cloudinary API</span>
-                  </div>
-                </div>
-              </div>
-
-              <div className="pt-4 border-t border-outline-variant text-xs text-on-surface-variant font-mono">
-                ⚡ Automations run in background
-              </div>
-            </div>
-
-            {/* Sub-panels for placeholders (Stats Row) */}
-            <div className="bg-surface-container border border-outline-variant rounded-xl p-5 flex items-center gap-4">
-              <div className="w-10 h-10 rounded-xl bg-surface-container-lowest border border-outline-variant flex items-center justify-center text-lg shadow-[0_4px_12px_rgba(0,0,0,0.2)]">
-                🎬
-              </div>
-              <div>
-                <div className="text-[10px] text-on-surface-variant uppercase tracking-wider font-bold">Videos Prepared</div>
-                <div className="text-lg font-black text-on-surface font-mono">10 / 10</div>
-              </div>
-            </div>
-
-            <div className="bg-surface-container border border-outline-variant rounded-xl p-5 flex items-center gap-4">
-              <div className="w-10 h-10 rounded-xl bg-surface-container-lowest border border-outline-variant flex items-center justify-center text-lg shadow-[0_4px_12px_rgba(0,0,0,0.2)]">
-                ⏳
-              </div>
-              <div>
-                <div className="text-[10px] text-on-surface-variant uppercase tracking-wider font-bold">Pending Renders</div>
-                <div className="text-lg font-black text-on-surface font-mono">0 Active</div>
-              </div>
-            </div>
-
-            <div className="bg-surface-container border border-outline-variant rounded-xl p-5 flex items-center gap-4">
-              <div className="w-10 h-10 rounded-xl bg-surface-container-lowest border border-outline-variant flex items-center justify-center text-lg shadow-[0_4px_12px_rgba(0,0,0,0.2)]">
-                ☁️
-              </div>
-              <div>
-                <div className="text-[10px] text-on-surface-variant uppercase tracking-wider font-bold">Storage Bucket</div>
-                <div className="text-xs text-on-surface-variant font-medium font-mono mt-1">geo_quiz_factory/</div>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* ── Feature 4: Prompt Blueprints Panel ── */}
-        <div className="bg-surface-container border border-outline-variant rounded-xl p-6 mt-6">
-          <div className="flex justify-between items-center mb-4">
-            <div>
-              <span className="text-[10px] font-bold uppercase tracking-wider text-primary mb-1 block font-mono">Feature 4</span>
-              <h2 className="text-lg font-bold text-on-surface tracking-tight">Niche Prompt Blueprints</h2>
-              <p className="text-xs text-on-surface-variant mt-1">Edit the dynamic LLM system/user prompts fetched from Firestore at generation time.</p>
-            </div>
-            <button onClick={fetchBlueprint} className="px-3 py-1.5 text-xs font-semibold rounded-md border border-outline-variant text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high transition-colors">↻ Reload</button>
-          </div>
-          {bpLoading ? (
-            <div className="text-on-surface-variant text-sm font-mono">Loading blueprint...</div>
-          ) : (
-            <div className="space-y-4">
-              <div>
-                <label className="block text-on-surface-variant text-xs font-mono font-bold mb-2 uppercase tracking-wider">System Prompt</label>
-                <textarea
-                  rows={5}
-                  value={blueprint?.systemPrompt ?? ""}
-                  onChange={e => setBlueprint(b => ({ ...b, systemPrompt: e.target.value }))}
-                  className="w-full bg-surface-container-lowest border border-outline-variant rounded-xl p-3 text-xs text-on-surface font-mono resize-y outline-none focus:border-primary transition-colors"
-                  placeholder="Enter the system prompt for Groq LPU calls..."
-                />
-              </div>
-              <div>
-                <label className="block text-on-surface-variant text-xs font-mono font-bold mb-2 uppercase tracking-wider">User Prompt Template</label>
-                <textarea
-                  rows={5}
-                  value={blueprint?.userPromptTemplate ?? ""}
-                  onChange={e => setBlueprint(b => ({ ...b, userPromptTemplate: e.target.value }))}
-                  className="w-full bg-surface-container-lowest border border-outline-variant rounded-xl p-3 text-xs text-on-surface font-mono resize-y outline-none focus:border-primary transition-colors"
-                  placeholder="Enter the user prompt template (use {countryName}, {tone}, {numQuestions} as variables)..."
-                />
-              </div>
-              <div className="flex items-center gap-3 mt-2">
-                <button
-                  onClick={saveBlueprint}
-                  disabled={bpSaving}
-                  className="bg-primary hover:bg-primary-container text-on-primary text-xs font-bold px-4 py-2 rounded-md transition-transform hover:scale-[0.98]"
-                >
-                  {bpSaving ? "Saving..." : "💾 Save Blueprint to Firestore"}
-                </button>
-                {bpMsg && <span className="text-xs text-on-surface-variant font-mono">{bpMsg}</span>}
-              </div>
-            </div>
-          )}
         </div>
+      </header>
 
-        {/* ── Feature 6: Branding Presets Panel ── */}
-        <div className="bg-surface-container border border-outline-variant rounded-xl p-6 mt-6">
-          <div className="mb-4">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-primary mb-1 block font-mono">Feature 6</span>
-            <h2 className="text-lg font-bold text-on-surface tracking-tight">Branding Presets</h2>
-            <p className="text-xs text-on-surface-variant mt-1">Configure watermark text stamped on every generated video frame.</p>
+      {error && (
+        <div className="mb-6 p-4 rounded bg-error/10 border border-error/30 text-error text-sm">
+          ⚠️ {error}
+        </div>
+      )}
+
+      {/* ── Main Grid Layout ── */}
+      <div className="grid grid-cols-1 lg:grid-cols-[1fr_300px] gap-6">
+        
+        {/* Left Column */}
+        <div className="space-y-6">
+          
+          {/* Card 1: Render Telemetry (from Image 1) */}
+          <div className="bg-surface-container border border-outline-variant rounded-xl p-5">
+            <div className="flex justify-between items-center mb-6">
+              <div className="flex items-center gap-2 text-sm font-semibold">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 12V7H5a2 2 0 0 1 0-4h14v4"/><path d="M3 15v4c0 1.1.9 2 2 2h14v-4"/><path d="M3 11v4h18v-4H3z"/></svg>
+                Render Telemetry
+              </div>
+              <span className="text-xs text-primary font-mono bg-primary/10 px-2 py-0.5 rounded">Active</span>
+            </div>
+            
+            <div className="flex items-end gap-3 mb-6">
+              <span className="text-5xl font-bold text-primary leading-none">72</span>
+              <span className="text-xs text-on-surface-variant mb-1">Current API Health</span>
+            </div>
+
+            {/* Fake Bar Chart */}
+            <div className="h-32 flex items-end gap-2 border-b border-surface-container-high pb-2">
+              <div className="w-full bg-surface-container-highest rounded-t-sm" style={{height: '40%'}}></div>
+              <div className="w-full bg-surface-container-highest rounded-t-sm" style={{height: '35%'}}></div>
+              <div className="w-full bg-surface-container-highest rounded-t-sm" style={{height: '60%'}}></div>
+              <div className="w-full bg-surface-container-highest rounded-t-sm" style={{height: '45%'}}></div>
+              <div className="w-full bg-surface-container-highest rounded-t-sm" style={{height: '55%'}}></div>
+              <div className="w-full bg-surface-container-highest rounded-t-sm" style={{height: '65%'}}></div>
+              <div className="w-full bg-primary rounded-t-sm" style={{height: '80%'}}></div>
+            </div>
+            <div className="flex justify-between text-[10px] text-on-surface-variant mt-2 px-1">
+              <span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span><span>Sun</span>
+            </div>
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
-            <div>
-              <label className="block text-on-surface-variant text-xs font-mono font-bold mb-2 uppercase tracking-wider">Watermark Text</label>
-              <input
-                type="text"
-                value={brandText}
-                onChange={e => setBrandText(e.target.value)}
-                placeholder="@YourChannel"
-                className="w-full bg-surface-container-lowest border border-outline-variant rounded-xl p-3 text-sm text-on-surface outline-none focus:border-primary transition-colors"
+
+          {/* Card 2: Prompt Blueprints (from Image 1) */}
+          <div className="bg-surface-container border border-outline-variant rounded-xl p-5">
+            <div className="flex justify-between items-center mb-5">
+              <div className="flex items-center gap-2 text-sm font-semibold">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>
+                Prompt Blueprints
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+              <div>
+                <label className="block text-[10px] text-on-surface-variant uppercase tracking-wider mb-2">System Role Configuration</label>
+                <select className="w-full bg-surface-container-lowest border border-outline-variant rounded p-2.5 text-xs outline-none">
+                  <option>Instructional Tone (Default)</option>
+                  <option>Humorous Tone</option>
+                  <option>Professional Tone</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-[10px] text-on-surface-variant uppercase tracking-wider mb-2">Output Format Schema</label>
+                <select className="w-full bg-surface-container-lowest border border-outline-variant rounded p-2.5 text-xs outline-none">
+                  <option>JSON with Video Metadata</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="mb-4">
+              <label className="block text-[10px] text-on-surface-variant uppercase tracking-wider mb-2">System Instructions</label>
+              <textarea
+                rows={3}
+                value={blueprint?.systemPrompt ?? "You are an expert short-form video scriptwriter..."}
+                onChange={e => setBlueprint(b => ({ ...b, systemPrompt: e.target.value }))}
+                className="w-full bg-surface-container-lowest border border-outline-variant rounded p-3 text-xs font-mono outline-none focus:border-primary transition-colors resize-none"
               />
             </div>
-            <div>
-              <label className="block text-on-surface-variant text-xs font-mono font-bold mb-2 uppercase tracking-wider">Position</label>
-              <select
-                value={brandPos}
-                onChange={e => setBrandPos(e.target.value)}
-                className="w-full bg-surface-container-lowest border border-outline-variant rounded-xl p-3 text-sm text-on-surface outline-none focus:border-primary transition-colors appearance-none"
+
+            <div className="flex justify-end mt-4">
+              <button
+                onClick={saveBlueprint}
+                disabled={bpSaving}
+                className="bg-surface-container-highest hover:bg-surface-bright border border-outline-variant text-xs font-medium px-4 py-2 rounded transition-colors flex items-center gap-2"
               >
-                <option value="top_right">Top Right</option>
-                <option value="top_left">Top Left</option>
-                <option value="bottom_right">Bottom Right</option>
-                <option value="bottom_left">Bottom Left</option>
-              </select>
+                {bpSaving ? "Saving..." : "Save Blueprint Changes"}
+              </button>
             </div>
-            <div>
-              <label className="block text-on-surface-variant text-xs font-mono font-bold mb-2 uppercase tracking-wider">Primary Color</label>
-              <div className="flex gap-2 items-center">
-                <input
-                  type="color"
-                  value={brandColor}
-                  onChange={e => setBrandColor(e.target.value)}
-                  className="w-10 h-10 rounded-lg border border-outline-variant bg-surface-container-lowest cursor-pointer"
-                />
-                <input
-                  type="text"
-                  value={brandColor}
-                  onChange={e => setBrandColor(e.target.value)}
-                  className="flex-1 bg-surface-container-lowest border border-outline-variant rounded-xl p-3 text-sm text-on-surface font-mono outline-none focus:border-primary transition-colors"
-                />
+            {bpMsg && <p className="text-xs text-on-surface-variant mt-2 text-right">{bpMsg}</p>}
+          </div>
+
+          {/* Card 3: Brand Presets (from Image 4) */}
+          <div className="mt-8">
+            <h2 className="text-2xl font-bold tracking-tight mb-1">Brand Presets</h2>
+            <p className="text-sm text-on-surface-variant mb-6">Configure global branding elements for video output. These settings override individual project configs.</p>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {/* Primary Brand Color */}
+              <div className="bg-surface-container border border-outline-variant rounded-xl p-5">
+                <div className="flex items-center gap-2 text-sm font-semibold mb-3">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></svg>
+                  Primary Brand Color
+                </div>
+                <p className="text-[11px] text-on-surface-variant mb-4 leading-relaxed">
+                  Select a primary brand color to apply across generated components. Custom HEX codes are supported.
+                </p>
+                <div className="flex items-center gap-3 mb-4">
+                  <div className="w-8 h-8 rounded-full bg-primary flex items-center justify-center border border-white/20"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="black" strokeWidth="3"><polyline points="20 6 9 17 4 12"/></svg></div>
+                  <div className="w-8 h-8 rounded-full bg-blue-500 cursor-pointer"></div>
+                  <div className="w-8 h-8 rounded-full bg-red-500 cursor-pointer"></div>
+                  <div className="w-8 h-8 rounded-full bg-amber-500 cursor-pointer"></div>
+                  <div className="w-8 h-8 rounded-full bg-purple-500 cursor-pointer"></div>
+                  <div className="w-8 h-8 rounded-full border border-dashed border-outline-variant flex items-center justify-center cursor-pointer">
+                    <input type="color" value={brandColor} onChange={e => setBrandColor(e.target.value)} className="opacity-0 absolute w-8 h-8" />
+                    <span className="text-xs">+</span>
+                  </div>
+                </div>
+                <div className="relative">
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center text-on-surface-variant text-xs">HEX</div>
+                  <input
+                    type="text"
+                    value={brandColor}
+                    onChange={e => setBrandColor(e.target.value)}
+                    className="w-full bg-surface-container-lowest border border-outline-variant rounded p-2 pl-10 text-xs font-mono outline-none"
+                  />
+                </div>
+              </div>
+
+              {/* Global Watermark */}
+              <div className="bg-surface-container border border-outline-variant rounded-xl p-5">
+                <div className="flex justify-between items-start mb-3">
+                  <div className="flex items-center gap-2 text-sm font-semibold">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+                    Global Watermark
+                  </div>
+                  <div className="flex items-center gap-2 text-xs">
+                    <span className="text-on-surface-variant">Enabled</span>
+                    <div className="w-8 h-4 rounded-full bg-primary relative cursor-pointer"><div className="w-3 h-3 bg-white rounded-full absolute right-0.5 top-0.5"></div></div>
+                  </div>
+                </div>
+                <p className="text-[11px] text-on-surface-variant mb-4 leading-relaxed">
+                  A subtle watermark applied to the bottom right of the video frame.
+                </p>
+                <div className="w-full bg-surface-container-lowest border border-outline-variant rounded aspect-video relative flex items-center justify-center mb-3 overflow-hidden">
+                  <div className="w-10 h-10 rounded bg-surface-container flex items-center justify-center opacity-50"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polygon points="5 3 19 12 5 21 5 3"/></svg></div>
+                  <div className="absolute bottom-3 right-3 px-2 py-1 bg-black/40 backdrop-blur rounded text-[8px] font-medium border border-white/10">
+                    <input type="text" value={brandText} onChange={e => setBrandText(e.target.value)} className="bg-transparent outline-none w-16 text-right" placeholder="@Watermark" />
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 text-[10px] text-on-surface-variant">
+                  <span>Opacity: 60%</span>
+                  <div className="flex-1 h-1 bg-surface-container-high rounded overflow-hidden">
+                    <div className="w-[60%] h-full bg-primary"></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-4 flex justify-start">
+               <button
+                onClick={saveBrandPreset}
+                disabled={brandSaving}
+                className="bg-primary hover:bg-primary-container text-on-primary text-xs font-bold px-5 py-2.5 rounded transition-transform hover:scale-[0.98]"
+              >
+                {brandSaving ? "Saving..." : "Save Preset"}
+              </button>
+            </div>
+          </div>
+          
+        </div>
+
+        {/* Right Sidebar */}
+        <div className="hidden lg:block space-y-6">
+          <div className="bg-surface-container border border-outline-variant rounded-xl flex flex-col h-[500px] overflow-hidden">
+             <div className="bg-surface-container-highest px-4 py-2 border-b border-outline-variant flex justify-between items-center text-[10px] font-mono text-on-surface-variant">
+               <span>► Telemetry Engine</span>
+               <div className="flex gap-1">
+                 <div className="w-2 h-2 rounded-full bg-surface-container-lowest"></div>
+                 <div className="w-2 h-2 rounded-full bg-surface-container-lowest"></div>
+                 <div className="w-2 h-2 rounded-full bg-surface-container-lowest"></div>
+               </div>
+             </div>
+             <div className="flex-1 p-4 bg-[#0a0b0e] font-mono text-[10px] leading-relaxed overflow-y-auto">
+               <div className="text-on-surface-variant mb-2">[SYS] Engine initialized. v3.4.1</div>
+               <div className="text-primary mb-2">[OK] Connect to WSS://render-pool-alpha</div>
+               <div className="text-on-surface-variant mb-2">2026-06-23T14:22:10Z Queue job #89212</div>
+               <div className="text-on-surface-variant mb-2">2026-06-23T14:22:15Z <span className="text-primary">Allocated GPU Node 4</span></div>
+               <div className="text-on-surface-variant mb-2">2026-06-23T14:23:01Z Encoding...</div>
+               <div className="text-primary mb-4">[OK] Job #89212 Complete</div>
+               <div className="text-on-surface-variant mb-2">2026-06-23T14:25:00Z Idle state.</div>
+               <div className="animate-pulse">_</div>
+             </div>
+          </div>
+          
+          {/* Card 4: Hook Matrix Engine (from Image 1) */}
+          <div className="bg-surface-container border border-outline-variant rounded-xl p-5">
+            <div className="flex justify-between items-center mb-4">
+              <div className="flex items-center gap-2 text-sm font-semibold">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+                Hook Matrix Engine
+              </div>
+              <div
+                onClick={toggleFactory}
+                className="w-8 h-4 rounded-full relative cursor-pointer transition-colors"
+                style={{ backgroundColor: isFactoryActive ? 'var(--color-primary)' : 'var(--color-surface-container-highest)' }}
+              >
+                <div className={`w-3 h-3 bg-white rounded-full absolute top-0.5 transition-all ${isFactoryActive ? 'right-0.5' : 'left-0.5'}`}></div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2">
+              <div className="bg-surface-container-lowest border border-primary/30 rounded p-3 relative overflow-hidden">
+                <div className="absolute top-2 right-2"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-primary"><path d="M22 11.08V12a10 10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></div>
+                <div className="text-[10px] text-on-surface-variant uppercase tracking-wider mb-1">Variant A</div>
+                <p className="text-[11px] leading-snug">"Stop scrolling! Did you know this secret about..."</p>
+              </div>
+              <div className="bg-surface-container-lowest border border-outline-variant rounded p-3">
+                <div className="text-[10px] text-on-surface-variant uppercase tracking-wider mb-1">Variant B</div>
+                <p className="text-[11px] leading-snug">"The most mysterious location in the world is..."</p>
               </div>
             </div>
           </div>
-          <div className="flex items-center gap-3 mt-4">
-            <button
-              onClick={saveBrandPreset}
-              disabled={brandSaving}
-              className="bg-primary hover:bg-primary-container text-on-primary text-xs font-bold px-4 py-2 rounded-md transition-transform hover:scale-[0.98]"
-            >
-              {brandSaving ? "Saving..." : "💾 Save Branding Preset"}
-            </button>
-            {brandMsg && <span className="text-xs text-on-surface-variant font-mono">{brandMsg}</span>}
-          </div>
-          <p className="text-[10px] text-on-surface-variant/70 mt-4 font-mono">
-            Preset is stored locally. To apply on render, the Preview page reads it and sends it in the render payload.
-          </p>
         </div>
-      </div>
 
-      {/* ── Footer ── */}
-      <footer className="mt-16 text-center text-[11px] text-on-surface-variant/70 font-mono leading-normal">
-        <p>ShortsFactory Control Center v3.0 • F4: Blueprints • F6: Branding • Firestore Authenticated</p>
-      </footer>
+      </div>
     </div>
   );
 }
