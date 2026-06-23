@@ -88,68 +88,111 @@ function LoginContent() {
   }
 
   return (
-    <div className="min-h-screen bg-zinc-950 flex items-center justify-center px-4" style={{ fontFamily: "'Inter', sans-serif" }}>
+    <div className="min-h-screen bg-surface flex items-center justify-center px-4 font-sans text-on-surface">
       {/* Background glow */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
-        <div style={{
-          position: "absolute", top: "20%", left: "50%", transform: "translateX(-50%)",
-          width: 600, height: 600, borderRadius: "50%",
-          background: "radial-gradient(circle, rgba(99,102,241,0.12) 0%, transparent 70%)",
-        }} />
+        <div className="absolute top-[20%] left-1/2 -translate-x-1/2 w-[600px] h-[600px] rounded-full bg-[radial-gradient(circle,rgba(78,222,163,0.08)_0%,transparent_70%)]" />
       </div>
 
-      <div style={{
-        width: "100%", maxWidth: 420,
-        background: "rgba(24,24,27,0.85)",
-        backdropFilter: "blur(16px)",
-        border: "1px solid rgba(63,63,70,0.8)",
-        borderRadius: 20,
-        padding: "40px 36px",
-        boxShadow: "0 32px 64px rgba(0,0,0,0.5)",
-        position: "relative",
-      }}>
+      <div className="w-full max-w-[420px] bg-surface-container-high/80 backdrop-blur-xl border border-outline-variant rounded-xl p-10 shadow-2xl relative">
         {/* Logo/Header */}
-        <div style={{ textAlign: "center", marginBottom: 32 }}>
-          <div style={{
-            display: "inline-flex", alignItems: "center", justifyContent: "center",
-            width: 56, height: 56, borderRadius: 14,
-            background: "linear-gradient(135deg, #6366f1, #8b5cf6)",
-            marginBottom: 16,
-            boxShadow: "0 8px 32px rgba(99,102,241,0.4)",
-          }}>
-            <span style={{ fontSize: 28 }}>⚡</span>
+        <div className="text-center mb-8 flex flex-col items-center">
+          <div className="inline-flex items-center justify-center w-14 h-14 rounded-xl bg-surface-container-lowest border border-outline-variant mb-4 shadow-[0_8px_32px_rgba(78,222,163,0.15)]">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-primary">
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10" />
+              <path d="m9 12 2 2 4-4" />
+            </svg>
           </div>
-          <h1 style={{ color: "#fafafa", fontSize: 24, fontWeight: 800, letterSpacing: "-0.5px", margin: 0 }}>
-            ShortsFactory Pro
+          <h1 className="text-on-surface text-2xl font-bold tracking-tight m-0">
+            Secure Admin Auth
           </h1>
-          <p style={{ color: "#71717a", fontSize: 14, marginTop: 6 }}>Admin Access Only</p>
+          <p className="text-on-surface-variant text-sm mt-2">Sign in to ShortsFactory Pro to manage your automated pipelines.</p>
         </div>
 
         {/* Error */}
         {error && (
-          <div style={{
-            background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.3)",
-            borderRadius: 10, padding: "12px 16px", marginBottom: 20,
-            color: "#f87171", fontSize: 13, textAlign: "center",
-          }}>
+          <div className="bg-error/10 border border-error/30 rounded-lg py-3 px-4 mb-5 text-error text-sm text-center">
             {error}
           </div>
         )}
+
+        {/* Email/Password Form */}
+        <form onSubmit={handleEmail} className="flex flex-col gap-4">
+          <div>
+            <label className="block text-on-surface-variant text-xs font-mono font-medium mb-1.5 uppercase tracking-wider">
+              Email Address
+            </label>
+            <div className="relative">
+              <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                <svg className="h-5 w-5 text-on-surface-variant" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M21.75 6.75v10.5a2.25 2.25 0 0 1-2.25 2.25h-15a2.25 2.25 0 0 1-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0 0 19.5 4.5h-15a2.25 2.25 0 0 0-2.25 2.25m19.5 0v.243a2.25 2.25 0 0 1-1.07 1.916l-7.5 4.615a2.25 2.25 0 0 1-2.36 0L3.32 8.91a2.25 2.25 0 0 1-1.07-1.916V6.75" />
+                </svg>
+              </div>
+              <input
+                type="email"
+                value={email}
+                onChange={e => setEmail(e.target.value)}
+                required
+                placeholder="admin@shortsfactory.pro"
+                className="w-full pl-10 pr-4 py-3 rounded-md bg-surface-container-lowest border border-outline-variant text-on-surface text-sm outline-none transition-colors focus:border-primary focus:shadow-[0_0_0_1px_rgba(78,222,163,0.5)] placeholder:text-surface-bright"
+              />
+            </div>
+          </div>
+          <div>
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="block text-on-surface-variant text-xs font-mono font-medium uppercase tracking-wider">
+                Password
+              </label>
+              <a href="#" className="text-xs text-primary font-mono hover:text-primary-container transition-colors">Forgot?</a>
+            </div>
+            <div className="relative">
+              <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                <svg className="h-5 w-5 text-on-surface-variant" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 1 0-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 0 0 2.25-2.25v-6.75a2.25 2.25 0 0 0-2.25-2.25H6.75a2.25 2.25 0 0 0-2.25 2.25v6.75a2.25 2.25 0 0 0 2.25 2.25Z" />
+                </svg>
+              </div>
+              <input
+                type="password"
+                value={password}
+                onChange={e => setPassword(e.target.value)}
+                required
+                placeholder="••••••••"
+                className="w-full pl-10 pr-4 py-3 rounded-md bg-surface-container-lowest border border-outline-variant text-on-surface text-sm outline-none transition-colors focus:border-primary focus:shadow-[0_0_0_1px_rgba(78,222,163,0.5)] placeholder:text-surface-bright"
+              />
+            </div>
+          </div>
+          <button
+            type="submit"
+            disabled={loading}
+            className={`w-full py-3 rounded-md mt-2 flex items-center justify-center gap-2 text-on-primary font-bold text-sm transition-all ${
+              loading ? "bg-primary/50 cursor-not-allowed" : "bg-primary hover:bg-primary-container hover:scale-[0.98] shadow-[0_4px_16px_rgba(78,222,163,0.25)]"
+            }`}
+          >
+            {loading ? "Signing in..." : (
+              <>
+                Sign In
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3" />
+                </svg>
+              </>
+            )}
+          </button>
+        </form>
+
+        {/* Divider */}
+        <div className="flex items-center gap-3 my-6">
+          <div className="flex-1 h-px bg-outline-variant" />
+          <span className="text-on-surface-variant text-xs font-mono uppercase tracking-wider">or</span>
+          <div className="flex-1 h-px bg-outline-variant" />
+        </div>
 
         {/* Google Button */}
         <button
           onClick={handleGoogle}
           disabled={googleLoading}
-          style={{
-            width: "100%", padding: "13px 20px", borderRadius: 12,
-            background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.12)",
-            color: "#e4e4e7", fontSize: 15, fontWeight: 600, cursor: "pointer",
-            display: "flex", alignItems: "center", justifyContent: "center", gap: 10,
-            transition: "all 0.2s", marginBottom: 20,
-            opacity: googleLoading ? 0.6 : 1,
-          }}
-          onMouseEnter={e => e.currentTarget.style.background = "rgba(255,255,255,0.1)"}
-          onMouseLeave={e => e.currentTarget.style.background = "rgba(255,255,255,0.06)"}
+          className={`w-full py-3 rounded-md border border-outline-variant bg-surface text-on-surface text-sm font-semibold flex items-center justify-center gap-3 transition-all ${
+            googleLoading ? "opacity-60 cursor-not-allowed" : "hover:bg-surface-container hover:border-outline cursor-pointer hover:scale-[0.99]"
+          }`}
         >
           <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
             <path d="M17.64 9.205c0-.639-.057-1.252-.164-1.841H9v3.481h4.844a4.14 4.14 0 01-1.796 2.716v2.259h2.908c1.702-1.567 2.684-3.875 2.684-6.615z" fill="#4285F4"/>
@@ -157,73 +200,12 @@ function LoginContent() {
             <path d="M3.964 10.71A5.41 5.41 0 013.682 9c0-.593.102-1.17.282-1.71V4.958H.957A8.996 8.996 0 000 9c0 1.452.348 2.827.957 4.042l3.007-2.332z" fill="#FBBC05"/>
             <path d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0A8.997 8.997 0 00.957 4.958L3.964 7.29C4.672 5.163 6.656 3.58 9 3.58z" fill="#EA4335"/>
           </svg>
-          {googleLoading ? "Signing in..." : "Continue with Google"}
+          {googleLoading ? "Signing in..." : "Sign in with Google"}
         </button>
 
-        {/* Divider */}
-        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 20 }}>
-          <div style={{ flex: 1, height: 1, background: "rgba(63,63,70,0.8)" }} />
-          <span style={{ color: "#52525b", fontSize: 12 }}>or</span>
-          <div style={{ flex: 1, height: 1, background: "rgba(63,63,70,0.8)" }} />
-        </div>
-
-        {/* Email/Password Form */}
-        <form onSubmit={handleEmail} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-          <div>
-            <label style={{ display: "block", color: "#a1a1aa", fontSize: 12, fontWeight: 600, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.05em" }}>
-              Email
-            </label>
-            <input
-              type="email"
-              value={email}
-              onChange={e => setEmail(e.target.value)}
-              required
-              placeholder="admin@example.com"
-              style={{
-                width: "100%", padding: "12px 16px", borderRadius: 10, boxSizing: "border-box",
-                background: "rgba(39,39,42,0.8)", border: "1px solid rgba(63,63,70,0.8)",
-                color: "#e4e4e7", fontSize: 14, outline: "none", transition: "border-color 0.2s",
-              }}
-              onFocus={e => e.target.style.borderColor = "#6366f1"}
-              onBlur={e => e.target.style.borderColor = "rgba(63,63,70,0.8)"}
-            />
-          </div>
-          <div>
-            <label style={{ display: "block", color: "#a1a1aa", fontSize: 12, fontWeight: 600, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.05em" }}>
-              Password
-            </label>
-            <input
-              type="password"
-              value={password}
-              onChange={e => setPassword(e.target.value)}
-              required
-              placeholder="••••••••"
-              style={{
-                width: "100%", padding: "12px 16px", borderRadius: 10, boxSizing: "border-box",
-                background: "rgba(39,39,42,0.8)", border: "1px solid rgba(63,63,70,0.8)",
-                color: "#e4e4e7", fontSize: 14, outline: "none", transition: "border-color 0.2s",
-              }}
-              onFocus={e => e.target.style.borderColor = "#6366f1"}
-              onBlur={e => e.target.style.borderColor = "rgba(63,63,70,0.8)"}
-            />
-          </div>
-          <button
-            type="submit"
-            disabled={loading}
-            style={{
-              width: "100%", padding: "13px 20px", borderRadius: 12, marginTop: 4,
-              background: loading ? "rgba(99,102,241,0.5)" : "linear-gradient(135deg, #6366f1, #8b5cf6)",
-              border: "none", color: "#fff", fontSize: 15, fontWeight: 700,
-              cursor: loading ? "not-allowed" : "pointer", transition: "all 0.2s",
-              boxShadow: loading ? "none" : "0 4px 16px rgba(99,102,241,0.4)",
-            }}
-          >
-            {loading ? "Signing in..." : "Sign In"}
-          </button>
-        </form>
-
-        <p style={{ textAlign: "center", color: "#3f3f46", fontSize: 12, marginTop: 24 }}>
-          Protected access • ShortsFactory Pro
+        <p className="text-center text-on-surface-variant/70 font-mono text-[10px] mt-8">
+          By signing in, you agree to the ShortsFactory Pro<br/>
+          <a href="#" className="underline hover:text-primary transition-colors">Terms of Service</a> and <a href="#" className="underline hover:text-primary transition-colors">Privacy Policy</a>.
         </p>
       </div>
     </div>
@@ -234,11 +216,8 @@ export default function LoginPage() {
   return (
     <Suspense
       fallback={
-        <div style={{
-          minHeight: "100vh", background: "#09090b",
-          display: "flex", alignItems: "center", justifyContent: "center",
-        }}>
-          <div style={{ color: "#52525b", fontFamily: "monospace", fontSize: 13 }}>Loading...</div>
+        <div className="min-h-screen bg-surface flex items-center justify-center">
+          <div className="text-on-surface-variant font-mono text-sm">Loading...</div>
         </div>
       }
     >

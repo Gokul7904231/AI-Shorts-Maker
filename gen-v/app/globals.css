@@ -1,38 +1,51 @@
 @import "tailwindcss";
 
 /* ── Design Tokens ──────────────────────────────────────────────────── */
+@theme {
+  --color-surface: #131316;
+  --color-surface-dim: #131316;
+  --color-surface-bright: #39393c;
+  --color-surface-container-lowest: #0e0e11;
+  --color-surface-container-low: #1b1b1e;
+  --color-surface-container: #1f1f22;
+  --color-surface-container-high: #2a2a2d;
+  --color-surface-container-highest: #353437;
+  --color-on-surface: #e4e1e5;
+  --color-on-surface-variant: #bbcabf;
+  
+  --color-primary: #4edea3;
+  --color-on-primary: #003824;
+  --color-primary-container: #10b981;
+  --color-on-primary-container: #00422b;
+  
+  --color-secondary: #c0c1ff;
+  --color-on-secondary: #1000a9;
+  --color-error: #ffb4ab;
+  --color-on-error: #690005;
+  
+  --color-background: #131316;
+  --color-on-background: #e4e1e5;
+  
+  --font-sans: var(--font-geist-sans), var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-jetbrains-mono), var(--font-geist-mono), ui-monospace, monospace;
+}
+
 :root {
-  --bg-base:          #09090b; /* zinc-950 */
-  --bg-surface:       #18181b; /* zinc-900 */
-  --bg-elevated:      #27272a; /* zinc-800 */
-  --border-subtle:    rgba(63,63,70,0.8);  /* zinc-700/80 */
-  --border-accent:    rgba(124,58,237,0.5);
+  --glass-bg:         rgba(31, 31, 34, 0.6); /* surface-container */
+  --glass-border:     rgba(134, 148, 138, 0.3); /* outline */
+  --glass-blur:       16px;
 
-  --accent-violet:    #7c3aed;
-  --accent-violet-lt: #a855f7;
-  --accent-emerald:   #10b981;
-  --accent-emerald-lt:#34d399;
-  --accent-cyan:      #0891b2;
-  --accent-cyan-lt:   #06b6d4;
-  --accent-red:       #ef4444;
-  --accent-amber:     #f59e0b;
+  --text-primary:     #e4e1e5;
+  --text-secondary:   #bbcabf;
+  --text-muted:       #86948a;
 
-  --glass-bg:         rgba(24,24,27,0.6);
-  --glass-border:     rgba(63,63,70,0.8);
-  --glass-blur:       12px;
+  --radius-sm:        0.125rem;
+  --radius-md:        0.375rem;
+  --radius-lg:        0.5rem;
+  --radius-xl:        0.75rem;
+  --radius-2xl:       1rem;
 
-  --text-primary:     #f4f4f5;
-  --text-secondary:   #a1a1aa;
-  --text-muted:       #52525b;
-
-  --radius-sm:        8px;
-  --radius-md:        12px;
-  --radius-lg:        16px;
-  --radius-xl:        20px;
-  --radius-2xl:       28px;
-
-  --shadow-glow-violet: 0 0 40px rgba(124,58,237,0.2), 0 4px 32px rgba(0,0,0,0.5);
-  --shadow-glow-emerald: 0 0 30px rgba(16,185,129,0.2), 0 4px 20px rgba(0,0,0,0.4);
+  --shadow-glow-primary: 0 0 40px rgba(78, 222, 163, 0.15), 0 4px 32px rgba(0, 0, 0, 0.5);
 }
 
 /* ── Base Reset ─────────────────────────────────────────────────────── */
@@ -42,9 +55,9 @@ html { height: 100%; scroll-behavior: smooth; }
 
 body {
   min-height: 100%;
-  background: var(--bg-base);
-  color: var(--text-primary);
-  font-family: var(--font-geist-sans, 'Inter', 'Segoe UI', system-ui, sans-serif);
+  background: var(--color-background, #131316);
+  color: var(--color-on-background, #e4e1e5);
+  font-family: var(--font-sans);
   font-feature-settings: "cv02","cv03","cv04","cv11";
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
