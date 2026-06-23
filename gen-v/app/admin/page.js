@@ -1,7 +1,18 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import Link from "next/link";
+import { 
+  BarChart2, 
+  Settings, 
+  Terminal, 
+  Network, 
+  Play, 
+  LayoutTemplate,
+  ChevronDown,
+  Star
+} from "lucide-react";
+import Sidebar from "@/components/Sidebar";
+import TopNav from "@/components/TopNav";
 
 export default function AdminPage() {
   const [mounted, setMounted] = useState(false);
@@ -11,24 +22,15 @@ export default function AdminPage() {
   const [updating, setUpdating] = useState(false);
   const [error, setError] = useState("");
 
-  // Feature 4: Prompt Blueprints panel state
   const [blueprint, setBlueprint] = useState(null);
   const [bpLoading, setBpLoading] = useState(false);
   const [bpSaving, setBpSaving] = useState(false);
   const [bpMsg, setBpMsg] = useState("");
 
-  // Feature 6: Branding Presets panel state
-  const [brandText, setBrandText] = useState("");
-  const [brandPos, setBrandPos] = useState("top_right");
-  const [brandColor, setBrandColor] = useState("#6366f1");
-  const [brandSaving, setBrandSaving] = useState(false);
-  const [brandMsg, setBrandMsg] = useState("");
-
   useEffect(() => {
     setMounted(true);
     fetchState();
     fetchBlueprint();
-    loadBrandPreset();
   }, []);
 
   async function fetchState() {
@@ -51,11 +53,8 @@ export default function AdminPage() {
 
   async function toggleFactory() {
     if (updating) return;
-
     const previousValue = isFactoryActive;
     const newValue = !previousValue;
-
-    // Optimistic update
     setIsFactoryActive(newValue);
     setUpdating(true);
     setError("");
@@ -71,25 +70,21 @@ export default function AdminPage() {
         const json = await res.json();
         throw new Error(json?.error ?? "Failed to save state");
       }
-
       const json = await res.json();
       if (json.lastUpdated) {
         setLastUpdated(new Date(json.lastUpdated).toLocaleString());
       }
     } catch (e) {
       setError(e?.message ?? "Failed to update factory state");
-      // Revert optimistic update
       setIsFactoryActive(previousValue);
     } finally {
       setUpdating(false);
     }
   }
 
-  // Feature 4: Blueprint management
   async function fetchBlueprint() {
     setBpLoading(true);
     try {
-      // Read via a dedicated API endpoint (reuses existing admin route pattern)
       const res = await fetch("/api/admin/blueprint");
       if (res.ok) {
         const d = await res.json();
@@ -118,276 +113,199 @@ export default function AdminPage() {
     }
   }
 
-  // Feature 6: Branding Presets (stored in localStorage for simplicity)
-  function loadBrandPreset() {
-    try {
-      const saved = localStorage.getItem("brand_preset");
-      if (saved) {
-        const p = JSON.parse(saved);
-        setBrandText(p.watermarkText ?? "");
-        setBrandPos(p.watermarkPosition ?? "top_right");
-        setBrandColor(p.primaryColor ?? "#6366f1");
-      }
-    } catch {}
-  }
-
-  function saveBrandPreset() {
-    setBrandSaving(true);
-    setBrandMsg("");
-    try {
-      localStorage.setItem("brand_preset", JSON.stringify({
-        watermarkText: brandText,
-        watermarkPosition: brandPos,
-        primaryColor: brandColor,
-      }));
-      setBrandMsg("✅ Branding preset saved locally!");
-    } catch (e) {
-      setBrandMsg(`❌ ${e.message}`);
-    } finally {
-      setBrandSaving(false);
-    }
-  }
-
   if (!mounted) return null;
 
   return (
-    <div className="min-h-screen pt-8 pb-16 px-6 md:px-10 max-w-6xl mx-auto font-sans text-on-surface">
-      {/* ── Top Header ── */}
-      <header className="flex justify-between items-center mb-8">
-        <h1 className="text-xl font-bold tracking-tight">ShortsFactory Pro</h1>
-        <div className="flex items-center gap-4">
-          <Link href="/preview" className="px-3 py-1.5 text-xs font-semibold rounded bg-surface-container hover:bg-surface-container-high transition-colors text-on-surface-variant">
-            Dashboard
-          </Link>
-          <div className="w-8 h-8 rounded-full bg-surface-container-high flex items-center justify-center">
-            <span className="text-xs">A</span>
-          </div>
-        </div>
-      </header>
-
-      {error && (
-        <div className="mb-6 p-4 rounded bg-error/10 border border-error/30 text-error text-sm">
-          ⚠️ {error}
-        </div>
-      )}
-
-      {/* ── Main Grid Layout ── */}
-      <div className="grid grid-cols-1 lg:grid-cols-[1fr_300px] gap-6">
+    <div className="flex min-h-screen bg-zinc-950 text-zinc-50 font-body-base">
+      <Sidebar />
+      <div className="flex-1 flex flex-col min-h-screen z-0 max-h-screen overflow-y-auto">
+        <TopNav title="Command Center" />
         
-        {/* Left Column */}
-        <div className="space-y-6">
+        <main className="w-full max-w-7xl mx-auto px-4 py-8 sm:px-6 lg:px-8 grid grid-cols-1 xl:grid-cols-12 gap-6">
           
-          {/* Card 1: Render Telemetry (from Image 1) */}
-          <div className="bg-surface-container border border-outline-variant rounded-xl p-5">
-            <div className="flex justify-between items-center mb-6">
-              <div className="flex items-center gap-2 text-sm font-semibold">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 12V7H5a2 2 0 0 1 0-4h14v4"/><path d="M3 15v4c0 1.1.9 2 2 2h14v-4"/><path d="M3 11v4h18v-4H3z"/></svg>
-                Render Telemetry
-              </div>
-              <span className="text-xs text-primary font-mono bg-primary/10 px-2 py-0.5 rounded">Active</span>
-            </div>
+          {/* Center Column (Main Logic) */}
+          <div className="xl:col-span-8 flex flex-col gap-6">
             
-            <div className="flex items-end gap-3 mb-6">
-              <span className="text-5xl font-bold text-primary leading-none">72</span>
-              <span className="text-xs text-on-surface-variant mb-1">Current API Health</span>
+            {/* Analytics 'Heatmap' Card */}
+            <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6 flex flex-col gap-4 relative overflow-hidden group">
+              <div className="absolute inset-0 bg-gradient-to-br from-emerald-500/5 to-transparent opacity-50 z-0"></div>
+              
+              <div className="relative z-10 flex justify-between items-start border-b border-zinc-800 pb-4">
+                <div>
+                  <h2 className="text-lg font-bold text-zinc-50 flex items-center gap-2">
+                    <BarChart2 className="w-5 h-5 text-emerald-400" />
+                    Render Telemetry
+                  </h2>
+                  <p className="text-xs font-medium text-zinc-500 mt-1 uppercase tracking-wider">Videos Generated This Week</p>
+                </div>
+                <div className="bg-emerald-500/10 border border-emerald-500/20 px-3 py-1 rounded-full flex items-center gap-2">
+                  <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>
+                  <span className="text-xs font-bold text-emerald-400 tracking-wider uppercase">Live</span>
+                </div>
+              </div>
+
+              <div className="relative z-10 flex items-end gap-3">
+                <div className="text-6xl font-black text-emerald-400 tracking-tighter drop-shadow-sm">72</div>
+                <div className="text-sm font-semibold text-zinc-400 pb-2">Videos Rendered</div>
+              </div>
+
+              {/* Mock Bar Chart */}
+              <div className="relative z-10 flex items-end gap-2 h-32 mt-4 border-b border-l border-zinc-800 pb-2 pl-2">
+                <div className="flex-1 bg-zinc-800 hover:bg-zinc-700 transition-colors rounded-t-sm h-[20%] relative group/bar">
+                  <div className="absolute -top-6 left-1/2 -translate-x-1/2 text-[10px] font-bold text-zinc-500 opacity-0 group-hover/bar:opacity-100 transition-opacity">12</div>
+                </div>
+                <div className="flex-1 bg-zinc-800 hover:bg-zinc-700 transition-colors rounded-t-sm h-[45%] relative group/bar">
+                  <div className="absolute -top-6 left-1/2 -translate-x-1/2 text-[10px] font-bold text-zinc-500 opacity-0 group-hover/bar:opacity-100 transition-opacity">28</div>
+                </div>
+                <div className="flex-1 bg-zinc-800 hover:bg-zinc-700 transition-colors rounded-t-sm h-[30%] relative group/bar">
+                  <div className="absolute -top-6 left-1/2 -translate-x-1/2 text-[10px] font-bold text-zinc-500 opacity-0 group-hover/bar:opacity-100 transition-opacity">18</div>
+                </div>
+                <div className="flex-1 bg-zinc-800 hover:bg-zinc-700 transition-colors rounded-t-sm h-[70%] relative group/bar">
+                  <div className="absolute -top-6 left-1/2 -translate-x-1/2 text-[10px] font-bold text-zinc-500 opacity-0 group-hover/bar:opacity-100 transition-opacity">45</div>
+                </div>
+                <div className="flex-1 bg-zinc-800 hover:bg-zinc-700 transition-colors rounded-t-sm h-[85%] relative group/bar">
+                  <div className="absolute -top-6 left-1/2 -translate-x-1/2 text-[10px] font-bold text-zinc-500 opacity-0 group-hover/bar:opacity-100 transition-opacity">58</div>
+                </div>
+                <div className="flex-1 bg-zinc-800 hover:bg-zinc-700 transition-colors rounded-t-sm h-[60%] relative group/bar">
+                  <div className="absolute -top-6 left-1/2 -translate-x-1/2 text-[10px] font-bold text-zinc-500 opacity-0 group-hover/bar:opacity-100 transition-opacity">39</div>
+                </div>
+                <div className="flex-1 bg-emerald-500 hover:bg-emerald-400 transition-colors rounded-t-sm h-[100%] relative group/bar shadow-[0_0_15px_rgba(16,185,129,0.3)]">
+                  <div className="absolute -top-6 left-1/2 -translate-x-1/2 text-[10px] font-bold text-emerald-400 opacity-100 transition-opacity">72</div>
+                </div>
+              </div>
+              <div className="flex justify-between text-[10px] font-bold text-zinc-500 px-2 uppercase tracking-wider">
+                <span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span><span className="text-emerald-400">Sun</span>
+              </div>
             </div>
 
-            {/* Fake Bar Chart */}
-            <div className="h-32 flex items-end gap-2 border-b border-surface-container-high pb-2">
-              <div className="w-full bg-surface-container-highest rounded-t-sm" style={{height: '40%'}}></div>
-              <div className="w-full bg-surface-container-highest rounded-t-sm" style={{height: '35%'}}></div>
-              <div className="w-full bg-surface-container-highest rounded-t-sm" style={{height: '60%'}}></div>
-              <div className="w-full bg-surface-container-highest rounded-t-sm" style={{height: '45%'}}></div>
-              <div className="w-full bg-surface-container-highest rounded-t-sm" style={{height: '55%'}}></div>
-              <div className="w-full bg-surface-container-highest rounded-t-sm" style={{height: '65%'}}></div>
-              <div className="w-full bg-primary rounded-t-sm" style={{height: '80%'}}></div>
+            {/* Custom Niche 'Prompt Blueprints' Form */}
+            <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6 flex flex-col gap-4">
+              <div className="border-b border-zinc-800 pb-4 flex justify-between items-center">
+                <h2 className="text-lg font-bold text-zinc-50 flex items-center gap-2">
+                  <LayoutTemplate className="w-5 h-5 text-indigo-400" />
+                  Prompt Blueprints
+                </h2>
+              </div>
+              
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="flex flex-col gap-2">
+                  <label className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">Niche Category</label>
+                  <div className="relative">
+                    <select className="w-full rounded-md border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 focus:outline-none transition-colors appearance-none">
+                      <option>Technology & Coding</option>
+                      <option>History & Lore</option>
+                      <option>Geography & Travel</option>
+                      <option>Finance & Crypto</option>
+                    </select>
+                    <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500 pointer-events-none" />
+                  </div>
+                </div>
+                <div className="flex flex-col gap-2">
+                  <label className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">Core Topic</label>
+                  <input className="w-full rounded-md border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 focus:outline-none transition-colors" placeholder="e.g., Python Web Scraping" type="text" />
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-2 mt-2">
+                <label className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">System Instructions</label>
+                <textarea
+                  rows={3}
+                  value={blueprint?.systemPrompt ?? "You are an expert short-form video scriptwriter..."}
+                  onChange={e => setBlueprint(b => ({ ...b, systemPrompt: e.target.value }))}
+                  className="w-full rounded-md border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 focus:outline-none transition-colors resize-y min-h-[80px] font-mono text-xs"
+                />
+              </div>
+
+              <div className="flex justify-between items-center mt-4 pt-4 border-t border-zinc-800">
+                <span className="text-xs font-medium text-zinc-400">{bpMsg}</span>
+                <button 
+                  onClick={saveBlueprint}
+                  disabled={bpSaving}
+                  className="bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-zinc-100 font-semibold py-2 px-4 rounded-md transition-all flex items-center gap-2 text-xs"
+                >
+                  <Star className="w-4 h-4 text-amber-400" />
+                  Save Blueprint
+                </button>
+              </div>
             </div>
-            <div className="flex justify-between text-[10px] text-on-surface-variant mt-2 px-1">
-              <span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span><span>Sun</span>
+
+            {/* Factory Operations */}
+            <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6 flex flex-col gap-4">
+              <div className="border-b border-zinc-800 pb-4 flex justify-between items-center">
+                <h2 className="text-lg font-bold text-zinc-50 flex items-center gap-2">
+                  <Network className="w-5 h-5 text-rose-400" />
+                  Automated Pipeline Engine
+                </h2>
+                
+                <div className="flex items-center gap-3">
+                  <span className="text-xs font-bold text-zinc-400 uppercase tracking-wider">
+                    {isFactoryActive ? "Active" : "Paused"}
+                  </span>
+                  <button 
+                    onClick={toggleFactory}
+                    className={`w-12 h-6 rounded-full relative transition-colors ${isFactoryActive ? 'bg-emerald-500' : 'bg-zinc-700'}`}
+                  >
+                    <div className={`absolute top-1 w-4 h-4 rounded-full bg-white transition-all ${isFactoryActive ? 'left-7' : 'left-1'}`} />
+                  </button>
+                </div>
+              </div>
+              
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-2">
+                <div className={`border rounded-lg p-4 transition-colors flex flex-col gap-2 ${isFactoryActive ? 'bg-emerald-500/5 border-emerald-500/30' : 'bg-zinc-950 border-zinc-800'}`}>
+                  <span className="text-xs font-bold text-emerald-400 uppercase tracking-wider">Content Engine</span>
+                  <p className="text-sm font-medium text-zinc-400">Worker status: {isFactoryActive ? 'Running' : 'Sleeping'}</p>
+                </div>
+              </div>
+              
+              <div className="flex justify-end mt-4">
+                <button className="bg-emerald-500 hover:bg-emerald-600 active:scale-[0.98] text-zinc-950 font-bold text-sm py-2 px-6 rounded-md transition-all flex items-center gap-2">
+                  <Play className="w-4 h-4 fill-zinc-950" />
+                  Force Render
+                </button>
+              </div>
+            </div>
+
+          </div>
+
+          {/* Right Sidebar (Terminal) */}
+          <div className="xl:col-span-4 h-full flex flex-col">
+            <div className="bg-zinc-950 border border-zinc-800 rounded-xl flex flex-col h-[600px] overflow-hidden">
+              <div className="bg-zinc-900 border-b border-zinc-800 p-4 flex items-center justify-between shrink-0">
+                <div className="flex items-center gap-2">
+                  <Terminal className="w-4 h-4 text-zinc-400" />
+                  <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider">Viral Telemetry</span>
+                </div>
+                <div className="flex gap-1.5">
+                  <div className="w-2.5 h-2.5 rounded-full bg-zinc-700"></div>
+                  <div className="w-2.5 h-2.5 rounded-full bg-zinc-700"></div>
+                  <div className="w-2.5 h-2.5 rounded-full bg-emerald-500/50"></div>
+                </div>
+              </div>
+              
+              <div className="flex-1 p-4 overflow-y-auto font-mono text-[11px] leading-relaxed text-zinc-400 flex flex-col gap-1.5">
+                <div className="text-emerald-400 opacity-70">ShortsFactory Pro v2.4.1 initialized...</div>
+                <div className="text-emerald-400 opacity-70">Establishing secure connection to rendering farm.</div>
+                <br />
+                <div><span className="text-zinc-500">[10:28:01 AM]</span> <span className="bg-emerald-500/20 text-emerald-400 px-1.5 py-0.5 rounded text-[9px] uppercase font-bold mr-1">INFO</span> Checking quota: 142/500 remaining.</div>
+                <div><span className="text-zinc-500">[10:28:05 AM]</span> <span className="bg-emerald-500/20 text-emerald-400 px-1.5 py-0.5 rounded text-[9px] uppercase font-bold mr-1">INFO</span> Loading blueprint: 'Python Scraper Basics'.</div>
+                <div><span className="text-zinc-500">[10:30:12 AM]</span> <span className="bg-indigo-500/20 text-indigo-400 px-1.5 py-0.5 rounded text-[9px] uppercase font-bold mr-1">EXEC</span> Invoking Groq LPU for script generation...</div>
+                <div className="pl-4 opacity-70">{">"} Latency: 42ms</div>
+                <div className="pl-4 opacity-70">{">"} Tokens generated: 345</div>
+                <div><span className="text-zinc-500">[10:30:14 AM]</span> <span className="bg-emerald-500/20 text-emerald-400 px-1.5 py-0.5 rounded text-[9px] uppercase font-bold mr-1">SUCCESS</span> Script generation complete.</div>
+                <div><span className="text-zinc-500">[10:30:15 AM]</span> <span className="bg-indigo-500/20 text-indigo-400 px-1.5 py-0.5 rounded text-[9px] uppercase font-bold mr-1">EXEC</span> Initiating ElevenLabs TTS synthesis...</div>
+                <div className="pl-4 opacity-70">{">"} Voice model: 'Rachel - Professional'</div>
+                <div><span className="text-zinc-500">[10:30:22 AM]</span> <span className="bg-emerald-500/20 text-emerald-400 px-1.5 py-0.5 rounded text-[9px] uppercase font-bold mr-1">SUCCESS</span> Audio rendered (14s duration).</div>
+                <div><span className="text-zinc-500">[10:30:25 AM]</span> <span className="bg-indigo-500/20 text-indigo-400 px-1.5 py-0.5 rounded text-[9px] uppercase font-bold mr-1">RENDER</span> Assembling visuals via FFmpeg...</div>
+                <div className="pl-4 animate-pulse text-emerald-400">{">"} [==================  ] 85%</div>
+                <div className="mt-auto pt-4 opacity-50 flex items-center gap-2">
+                  <span className="w-1.5 h-3 bg-emerald-400 animate-pulse inline-block"></span>
+                  Awaiting next command...
+                </div>
+              </div>
             </div>
           </div>
 
-          {/* Card 2: Prompt Blueprints (from Image 1) */}
-          <div className="bg-surface-container border border-outline-variant rounded-xl p-5">
-            <div className="flex justify-between items-center mb-5">
-              <div className="flex items-center gap-2 text-sm font-semibold">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>
-                Prompt Blueprints
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-              <div>
-                <label className="block text-[10px] text-on-surface-variant uppercase tracking-wider mb-2">System Role Configuration</label>
-                <select className="w-full bg-surface-container-lowest border border-outline-variant rounded p-2.5 text-xs outline-none">
-                  <option>Instructional Tone (Default)</option>
-                  <option>Humorous Tone</option>
-                  <option>Professional Tone</option>
-                </select>
-              </div>
-              <div>
-                <label className="block text-[10px] text-on-surface-variant uppercase tracking-wider mb-2">Output Format Schema</label>
-                <select className="w-full bg-surface-container-lowest border border-outline-variant rounded p-2.5 text-xs outline-none">
-                  <option>JSON with Video Metadata</option>
-                </select>
-              </div>
-            </div>
-
-            <div className="mb-4">
-              <label className="block text-[10px] text-on-surface-variant uppercase tracking-wider mb-2">System Instructions</label>
-              <textarea
-                rows={3}
-                value={blueprint?.systemPrompt ?? "You are an expert short-form video scriptwriter..."}
-                onChange={e => setBlueprint(b => ({ ...b, systemPrompt: e.target.value }))}
-                className="w-full bg-surface-container-lowest border border-outline-variant rounded p-3 text-xs font-mono outline-none focus:border-primary transition-colors resize-none"
-              />
-            </div>
-
-            <div className="flex justify-end mt-4">
-              <button
-                onClick={saveBlueprint}
-                disabled={bpSaving}
-                className="bg-surface-container-highest hover:bg-surface-bright border border-outline-variant text-xs font-medium px-4 py-2 rounded transition-colors flex items-center gap-2"
-              >
-                {bpSaving ? "Saving..." : "Save Blueprint Changes"}
-              </button>
-            </div>
-            {bpMsg && <p className="text-xs text-on-surface-variant mt-2 text-right">{bpMsg}</p>}
-          </div>
-
-          {/* Card 3: Brand Presets (from Image 4) */}
-          <div className="mt-8">
-            <h2 className="text-2xl font-bold tracking-tight mb-1">Brand Presets</h2>
-            <p className="text-sm text-on-surface-variant mb-6">Configure global branding elements for video output. These settings override individual project configs.</p>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {/* Primary Brand Color */}
-              <div className="bg-surface-container border border-outline-variant rounded-xl p-5">
-                <div className="flex items-center gap-2 text-sm font-semibold mb-3">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></svg>
-                  Primary Brand Color
-                </div>
-                <p className="text-[11px] text-on-surface-variant mb-4 leading-relaxed">
-                  Select a primary brand color to apply across generated components. Custom HEX codes are supported.
-                </p>
-                <div className="flex items-center gap-3 mb-4">
-                  <div className="w-8 h-8 rounded-full bg-primary flex items-center justify-center border border-white/20"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="black" strokeWidth="3"><polyline points="20 6 9 17 4 12"/></svg></div>
-                  <div className="w-8 h-8 rounded-full bg-blue-500 cursor-pointer"></div>
-                  <div className="w-8 h-8 rounded-full bg-red-500 cursor-pointer"></div>
-                  <div className="w-8 h-8 rounded-full bg-amber-500 cursor-pointer"></div>
-                  <div className="w-8 h-8 rounded-full bg-purple-500 cursor-pointer"></div>
-                  <div className="w-8 h-8 rounded-full border border-dashed border-outline-variant flex items-center justify-center cursor-pointer">
-                    <input type="color" value={brandColor} onChange={e => setBrandColor(e.target.value)} className="opacity-0 absolute w-8 h-8" />
-                    <span className="text-xs">+</span>
-                  </div>
-                </div>
-                <div className="relative">
-                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center text-on-surface-variant text-xs">HEX</div>
-                  <input
-                    type="text"
-                    value={brandColor}
-                    onChange={e => setBrandColor(e.target.value)}
-                    className="w-full bg-surface-container-lowest border border-outline-variant rounded p-2 pl-10 text-xs font-mono outline-none"
-                  />
-                </div>
-              </div>
-
-              {/* Global Watermark */}
-              <div className="bg-surface-container border border-outline-variant rounded-xl p-5">
-                <div className="flex justify-between items-start mb-3">
-                  <div className="flex items-center gap-2 text-sm font-semibold">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
-                    Global Watermark
-                  </div>
-                  <div className="flex items-center gap-2 text-xs">
-                    <span className="text-on-surface-variant">Enabled</span>
-                    <div className="w-8 h-4 rounded-full bg-primary relative cursor-pointer"><div className="w-3 h-3 bg-white rounded-full absolute right-0.5 top-0.5"></div></div>
-                  </div>
-                </div>
-                <p className="text-[11px] text-on-surface-variant mb-4 leading-relaxed">
-                  A subtle watermark applied to the bottom right of the video frame.
-                </p>
-                <div className="w-full bg-surface-container-lowest border border-outline-variant rounded aspect-video relative flex items-center justify-center mb-3 overflow-hidden">
-                  <div className="w-10 h-10 rounded bg-surface-container flex items-center justify-center opacity-50"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polygon points="5 3 19 12 5 21 5 3"/></svg></div>
-                  <div className="absolute bottom-3 right-3 px-2 py-1 bg-black/40 backdrop-blur rounded text-[8px] font-medium border border-white/10">
-                    <input type="text" value={brandText} onChange={e => setBrandText(e.target.value)} className="bg-transparent outline-none w-16 text-right" placeholder="@Watermark" />
-                  </div>
-                </div>
-                <div className="flex items-center gap-2 text-[10px] text-on-surface-variant">
-                  <span>Opacity: 60%</span>
-                  <div className="flex-1 h-1 bg-surface-container-high rounded overflow-hidden">
-                    <div className="w-[60%] h-full bg-primary"></div>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div className="mt-4 flex justify-start">
-               <button
-                onClick={saveBrandPreset}
-                disabled={brandSaving}
-                className="bg-primary hover:bg-primary-container text-on-primary text-xs font-bold px-5 py-2.5 rounded transition-transform hover:scale-[0.98]"
-              >
-                {brandSaving ? "Saving..." : "Save Preset"}
-              </button>
-            </div>
-          </div>
-          
-        </div>
-
-        {/* Right Sidebar */}
-        <div className="hidden lg:block space-y-6">
-          <div className="bg-surface-container border border-outline-variant rounded-xl flex flex-col h-[500px] overflow-hidden">
-             <div className="bg-surface-container-highest px-4 py-2 border-b border-outline-variant flex justify-between items-center text-[10px] font-mono text-on-surface-variant">
-               <span>► Telemetry Engine</span>
-               <div className="flex gap-1">
-                 <div className="w-2 h-2 rounded-full bg-surface-container-lowest"></div>
-                 <div className="w-2 h-2 rounded-full bg-surface-container-lowest"></div>
-                 <div className="w-2 h-2 rounded-full bg-surface-container-lowest"></div>
-               </div>
-             </div>
-             <div className="flex-1 p-4 bg-[#0a0b0e] font-mono text-[10px] leading-relaxed overflow-y-auto">
-               <div className="text-on-surface-variant mb-2">[SYS] Engine initialized. v3.4.1</div>
-               <div className="text-primary mb-2">[OK] Connect to WSS://render-pool-alpha</div>
-               <div className="text-on-surface-variant mb-2">2026-06-23T14:22:10Z Queue job #89212</div>
-               <div className="text-on-surface-variant mb-2">2026-06-23T14:22:15Z <span className="text-primary">Allocated GPU Node 4</span></div>
-               <div className="text-on-surface-variant mb-2">2026-06-23T14:23:01Z Encoding...</div>
-               <div className="text-primary mb-4">[OK] Job #89212 Complete</div>
-               <div className="text-on-surface-variant mb-2">2026-06-23T14:25:00Z Idle state.</div>
-               <div className="animate-pulse">_</div>
-             </div>
-          </div>
-          
-          {/* Card 4: Hook Matrix Engine (from Image 1) */}
-          <div className="bg-surface-container border border-outline-variant rounded-xl p-5">
-            <div className="flex justify-between items-center mb-4">
-              <div className="flex items-center gap-2 text-sm font-semibold">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
-                Hook Matrix Engine
-              </div>
-              <div
-                onClick={toggleFactory}
-                className="w-8 h-4 rounded-full relative cursor-pointer transition-colors"
-                style={{ backgroundColor: isFactoryActive ? 'var(--color-primary)' : 'var(--color-surface-container-highest)' }}
-              >
-                <div className={`w-3 h-3 bg-white rounded-full absolute top-0.5 transition-all ${isFactoryActive ? 'right-0.5' : 'left-0.5'}`}></div>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-2">
-              <div className="bg-surface-container-lowest border border-primary/30 rounded p-3 relative overflow-hidden">
-                <div className="absolute top-2 right-2"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-primary"><path d="M22 11.08V12a10 10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></div>
-                <div className="text-[10px] text-on-surface-variant uppercase tracking-wider mb-1">Variant A</div>
-                <p className="text-[11px] leading-snug">"Stop scrolling! Did you know this secret about..."</p>
-              </div>
-              <div className="bg-surface-container-lowest border border-outline-variant rounded p-3">
-                <div className="text-[10px] text-on-surface-variant uppercase tracking-wider mb-1">Variant B</div>
-                <p className="text-[11px] leading-snug">"The most mysterious location in the world is..."</p>
-              </div>
-            </div>
-          </div>
-        </div>
-
+        </main>
       </div>
     </div>
   );

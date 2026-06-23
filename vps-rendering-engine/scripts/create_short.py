@@ -1160,7 +1160,7 @@ def run_quiz_shorts(job: dict, out_dir: Path, out_audio: Path, out_srt: Path, ou
         for idx, req in enumerate(tts_requests):
             inp_idx = idx + 2
             delay_ms = int(req["start_time"] * 1000)
-            filter_parts.append(f"[{inp_idx}:a]adelay={delay_ms}|{delay_ms}:all=1[a_delayed_{inp_idx}]")
+            filter_parts.append(f"[{inp_idx}:a]volume=3.0,adelay={delay_ms}|{delay_ms}:all=1[a_delayed_{inp_idx}]")
 
         delayed_labels = "".join(f"[a_delayed_{i+2}]" for i in range(len(tts_requests)))
         
@@ -1178,9 +1178,9 @@ def run_quiz_shorts(job: dict, out_dir: Path, out_audio: Path, out_srt: Path, ou
                 filter_parts.append(f"[ding_split_{i}]adelay={ding_delays[i]}|{ding_delays[i]}:all=1[ding_d_{i}]")
                 sfx_mix_labels += f"[pop_d_{i}][ding_d_{i}]"
 
-        filter_parts.append(f"[{bgm_idx}:a]volume=0.1[bgm_vol]")
+        filter_parts.append(f"[{bgm_idx}:a]volume=0.08[bgm_vol]")
         total_audio_inputs = len(tts_requests) + (num_q * 2) + 1
-        filter_parts.append(f"{delayed_labels}{sfx_mix_labels}[bgm_vol]amix=inputs={total_audio_inputs}:duration=longest:dropout_transition=0[a_mixed]")
+        filter_parts.append(f"{delayed_labels}{sfx_mix_labels}[bgm_vol]amix=inputs={total_audio_inputs}:duration=longest:dropout_transition=0[a_amix_out];[a_amix_out]volume=4.0[a_mixed]")
         
         # 5. Render frames to PNGs in memory via Pillow (extremely fast, avoids Windows Font file I/O bottleneck in FFmpeg)
         ffmpeg_start = time.perf_counter()
@@ -1545,13 +1545,28 @@ def run_quiz_shorts(job: dict, out_dir: Path, out_audio: Path, out_srt: Path, ou
         thumbnail_url = None
 
         try:
+            # 1. Extract the hashtags sent from your Next.js /route.ts API
+            raw_hashtags = job.get("hashtags", [])
+            
+            # 2. Clean the tags (Cloudinary internal tags don't use the '#' symbol)
+            clean_tags = [tag.replace("#", "").strip() for tag in raw_hashtags]
+            
+            # 3. Add permanent architectural tags so you can easily filter later
+            system_tags = ["mindrush_hq", "automated_batch", job.get("contentType", "quiz")]
+            
+            # Combine them into one master list
+            final_tags = clean_tags + system_tags
+
+            print(f"🚀 Uploading to Cloudinary with tags: {final_tags}")
             print(f"[Cloudinary] Uploading video to {folder_path}/{public_id_str} ...")
+
             upload_res = cloudinary.uploader.upload(
                 str(out_final),
                 resource_type="video",
                 folder=folder_path,
                 public_id=public_id_str,
                 overwrite=True,
+                tags=final_tags
             )
             video_url = upload_res.get("secure_url")
             print(f"[Cloudinary] Video uploaded: {video_url}")
