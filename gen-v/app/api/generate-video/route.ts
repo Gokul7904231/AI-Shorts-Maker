@@ -14,10 +14,11 @@ const SceneInputSchema = z.object({
 });
 
 const QuizQuestionInputSchema = z.object({
-  difficulty: z.enum(["easy", "medium", "hard"]),
+  difficulty: z.enum(["easy", "medium", "hard"]).optional(),
   question: z.string(),
   options: z.array(z.string()),
-  answer: z.string(),
+  answer: z.string().optional(),
+  answerIndex: z.number().int().min(0).max(3).optional(),
 });
 
 const GenerateVideoRequestSchema = z.object({
@@ -32,38 +33,49 @@ const GenerateVideoRequestSchema = z.object({
   title: z.string().optional(),
   description: z.string().optional(),
   hashtags: z.array(z.string()).optional(),
+  // YouTube Shorts target duration (clamped server-side to 30–60 s)
+  durationSeconds: z.number().optional(),
 });
 
 function validateQuizContent(quiz: { hook?: string; questions?: any[] }) {
   const errors: string[] = [];
   if (!quiz.hook) errors.push("Missing hook");
-  if (!Array.isArray(quiz.questions) || quiz.questions.length !== 10) {
-    errors.push(`Quiz must contain exactly 10 questions, got ${quiz.questions?.length ?? 0}`);
+  if (!Array.isArray(quiz.questions) || quiz.questions.length === 0) {
+    errors.push(`Quiz must contain at least 1 question, got ${quiz.questions?.length ?? 0}`);
   } else {
     const seen = new Set<string>();
-    for (let i = 0; i < 10; i++) {
+    const expectedLength = quiz.questions.length;
+    for (let i = 0; i < expectedLength; i++) {
       const q = quiz.questions[i];
       const num = i + 1;
       if (!q.question || typeof q.question !== "string" || q.question.trim().length === 0) {
         errors.push(`Question ${num} text is missing or invalid`);
         continue;
       }
-      if (!Array.isArray(q.options) || q.options.length !== 3) {
-        errors.push(`Question ${num} must have exactly 3 options`);
+      if (!Array.isArray(q.options) || q.options.length < 2) {
+        errors.push(`Question ${num} must have at least 2 options`);
       } else {
-        if (!q.answer || typeof q.answer !== "string") {
-          errors.push(`Question ${num} is missing answer`);
-        } else if (!q.options.includes(q.answer)) {
+        const hasAnswerIndex = typeof q.answerIndex === "number" && q.answerIndex >= 0 && q.answerIndex < q.options.length;
+        const hasAnswer = typeof q.answer === "string" && q.answer.trim().length > 0;
+
+        if (!hasAnswer && !hasAnswerIndex) {
+          errors.push(`Question ${num} is missing a valid answer or answerIndex`);
+        } else if (hasAnswer && !hasAnswerIndex && !q.options.includes(q.answer)) {
+          // Only reject if answer string doesn't match any option AND no answerIndex fallback
           errors.push(`Question ${num} answer "${q.answer}" must match one of the options`);
         }
       }
-      const diff = String(q.difficulty ?? "").toLowerCase();
-      if (i >= 0 && i <= 2 && diff !== "easy") {
-        errors.push(`Question ${num} difficulty must be 'easy', got '${diff}'`);
-      } else if (i >= 3 && i <= 5 && diff !== "medium") {
-        errors.push(`Question ${num} difficulty must be 'medium', got '${diff}'`);
-      } else if (i >= 6 && i <= 9 && diff !== "hard") {
-        errors.push(`Question ${num} difficulty must be 'hard', got '${diff}'`);
+
+      // Difficulty is optional for geo-quiz; only enforce for strict 10-question format
+      if (expectedLength === 10) {
+        const diff = String(q.difficulty ?? "").toLowerCase();
+        if (i >= 0 && i <= 2 && diff !== "easy") {
+          errors.push(`Question ${num} difficulty must be 'easy', got '${diff}'`);
+        } else if (i >= 3 && i <= 5 && diff !== "medium") {
+          errors.push(`Question ${num} difficulty must be 'medium', got '${diff}'`);
+        } else if (i >= 6 && i <= 9 && diff !== "hard") {
+          errors.push(`Question ${num} difficulty must be 'hard', got '${diff}'`);
+        }
       }
 
       const qText = q.question.trim().toLowerCase();
@@ -100,6 +112,10 @@ export async function POST(req: Request) {
     const jobId = `job_${crypto.randomBytes(8).toString("hex")}`;
     let finalPayload: any = null;
 
+    // Clamp duration to YouTube Shorts range (30–60 s)
+    const rawDuration = parsed.data.durationSeconds ?? 45;
+    const durationSeconds = Math.min(60, Math.max(30, Number.isFinite(rawDuration) ? rawDuration : 45));
+
     if (parsed.data.contentType === "QUIZ_SHORTS") {
       const validate = validateQuizContent({
         hook: parsed.data.hook,
@@ -127,6 +143,7 @@ export async function POST(req: Request) {
           hashtags: parsed.data.hashtags,
         },
         renderProfile: parsed.data.renderProfile || "FAST_QUIZ",
+        durationSeconds,
         status: "queued",
         createdAt: new Date().toISOString(),
         renderDurationSeconds: 0,
@@ -192,6 +209,7 @@ export async function POST(req: Request) {
         scenes: finalScenes,
         contentType: parsed.data.contentType || "MOTIVATIONAL",
         renderProfile: parsed.data.renderProfile || "STANDARD_SHORTS",
+        durationSeconds,
         status: "queued",
         createdAt: new Date().toISOString(),
         renderDurationSeconds: 0,
@@ -202,17 +220,16 @@ export async function POST(req: Request) {
     // Initialize document in Firestore
     await saveJobManifest(jobId, finalPayload);
 
-    // Call standalone python microservice
+    // Fire-and-forget: trigger the rendering microservice without blocking job submission.
+    // The job is already persisted in Firestore as "queued", so the render engine will
+    // automatically pick it up on startup even if this fetch fails.
     const renderEngineUrl = process.env.NEXT_PUBLIC_RENDER_ENGINE_URL;
-    if (!renderEngineUrl) {
-      return NextResponse.json(
-        { error: "NEXT_PUBLIC_RENDER_ENGINE_URL is not set" },
-        { status: 500 }
-      );
-    }
+    if (renderEngineUrl) {
+      // Use AbortController to prevent the fetch from hanging indefinitely.
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10_000); // 10 s timeout
 
-    try {
-      const response = await fetch(`${renderEngineUrl}/render-video`, {
+      fetch(`${renderEngineUrl}/render-video`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -226,25 +243,27 @@ export async function POST(req: Request) {
           scenes: finalPayload.scenes,
           quizData: finalPayload.quizData,
         }),
-      });
-
-      if (!response.ok) {
-        await saveJobManifest(jobId, { status: "failed" });
-        const resText = await response.text();
-        return NextResponse.json(
-          { error: `Microservice returned error: ${resText}` },
-          { status: response.status }
-        );
-      }
-    } catch (err: any) {
-      await saveJobManifest(jobId, { status: "failed" });
-      return NextResponse.json(
-        { error: `Failed to trigger rendering microservice: ${err.message}` },
-        { status: 502 }
-      );
+        signal: controller.signal,
+      })
+        .then(async (response) => {
+          clearTimeout(timeoutId);
+          if (!response.ok) {
+            const resText = await response.text().catch(() => "(unreadable)");
+            console.error(`[generate-video] Render engine returned ${response.status}: ${resText}`);
+            // Don't mark as failed — engine may retry internally; leave status as "queued"
+          }
+        })
+        .catch((err: any) => {
+          clearTimeout(timeoutId);
+          // Log but do NOT fail the request — job is in Firestore and engine will
+          // pick it up automatically when it comes online (startup re-queue).
+          console.warn(`[generate-video] Render engine unreachable (job ${jobId} stays queued): ${err?.message ?? err}`);
+        });
+    } else {
+      console.warn("[generate-video] NEXT_PUBLIC_RENDER_ENGINE_URL is not set — job queued in Firestore only.");
     }
 
-    return NextResponse.json({ jobId, status: "queued" });
+    return NextResponse.json({ jobId, videoId: jobId, status: "queued" });
   } catch (err: any) {
     return NextResponse.json(
       { error: err?.message ?? "Failed to generate video" },

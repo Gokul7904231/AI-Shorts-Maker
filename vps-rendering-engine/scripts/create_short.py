@@ -5,6 +5,16 @@ import os
 import time
 import shutil
 from pathlib import Path
+
+# Load .env from render engine root (for standalone execution)
+try:
+    from dotenv import load_dotenv as _load_dotenv
+    _env_file = Path(__file__).resolve().parent.parent / ".env"
+    if _env_file.exists():
+        _load_dotenv(dotenv_path=_env_file)
+except ImportError:
+    pass
+
 import firebase_admin
 from firebase_admin import credentials, firestore
 import cloudinary
@@ -102,6 +112,8 @@ def _finalize_render_and_upload(
     is_quiz: bool = False,
     video_duration: float | None = None,
     start_time: float = 0.0,
+    country: str = "default",
+    video_url: str | None = None,
 ) -> None:
     total_execution_seconds = int(time.time() - start_time)
     video_size_mb = 0.0
@@ -110,31 +122,37 @@ def _finalize_render_and_upload(
         
     _init_firebase()
     
-    video_url = None
     thumbnail_url = None
     subtitles_url = None
     cloudinary_public_id = None
     cloudinary_thumb_id = None
     cloudinary_srt_id = None
+
+    country_folder = country.lower().strip().replace(" ", "_")
+    folder_path = f"ai_shorts/quizzes/{country_folder}/{job_id}" if is_quiz else f"ai_shorts/{job_id}"
     
     try:
-        print(f"[Cloudinary] Uploading {out_final} as video...")
-        video_upload = cloudinary.uploader.upload(
-            str(out_final),
-            resource_type="video",
-            folder=f"ai_shorts/{job_id}",
-            overwrite=True
-        )
-        video_url = video_upload.get("secure_url")
-        cloudinary_public_id = video_upload.get("public_id")
-        print(f"[Cloudinary] Video uploaded. URL: {video_url}, Public ID: {cloudinary_public_id}")
+        if not video_url:
+            print(f"[Cloudinary] Uploading {out_final} as video to {folder_path}...")
+            video_upload = cloudinary.uploader.upload(
+                str(out_final),
+                resource_type="video",
+                folder=folder_path,
+                overwrite=True
+            )
+            video_url = video_upload.get("secure_url")
+            cloudinary_public_id = video_upload.get("public_id")
+            print(f"[Cloudinary] Video uploaded. URL: {video_url}, Public ID: {cloudinary_public_id}")
+        else:
+            cloudinary_public_id = f"{folder_path}/final"
+            print(f"[Cloudinary] Using pre-streamed Video URL: {video_url}")
         
         if out_thumbnail.exists():
-            print(f"[Cloudinary] Uploading {out_thumbnail} as image...")
+            print(f"[Cloudinary] Uploading {out_thumbnail} as image to {folder_path}...")
             thumb_upload = cloudinary.uploader.upload(
                 str(out_thumbnail),
                 resource_type="image",
-                folder=f"ai_shorts/{job_id}",
+                folder=folder_path,
                 overwrite=True
             )
             thumbnail_url = thumb_upload.get("secure_url")
@@ -142,11 +160,11 @@ def _finalize_render_and_upload(
             print(f"[Cloudinary] Thumbnail uploaded. URL: {thumbnail_url}, Public ID: {cloudinary_thumb_id}")
             
         if out_srt.exists():
-            print(f"[Cloudinary] Uploading {out_srt} as raw file...")
+            print(f"[Cloudinary] Uploading {out_srt} as raw file to {folder_path}...")
             srt_upload = cloudinary.uploader.upload(
                 str(out_srt),
                 resource_type="raw",
-                folder=f"ai_shorts/{job_id}",
+                folder=folder_path,
                 overwrite=True
             )
             subtitles_url = srt_upload.get("secure_url")
@@ -168,7 +186,7 @@ def _finalize_render_and_upload(
             "renderDurationSeconds": total_execution_seconds,
             "videoSizeMb": video_size_mb,
             "fps": subtitle_meta.get("fps", 18 if is_quiz else 24),
-            "resolution": subtitle_meta.get("resolution", "540x960" if is_quiz else "720x1280"),
+            "resolution": subtitle_meta.get("resolution", "1080x1920" if is_quiz else "720x1280"),
             "timings": timings,
             "cache": {"hits": cache_hits, "misses": cache_misses},
             "playable": probe.get("playable", True),
@@ -178,6 +196,26 @@ def _finalize_render_and_upload(
         print(f"[Firebase] Updating Firestore document {job_id}...")
         doc_ref.set(update_payload, merge=True)
         print("[Firebase] Firestore update complete.")
+
+        # Write local result.json for main.py to read completion metadata
+        result_payload = {
+            "jobId": job_id,
+            "status": "completed",
+            "videoUrl": video_url,
+            "thumbnailUrl": thumbnail_url,
+            "subtitlesUrl": subtitles_url,
+            "renderProfile": subtitle_meta.get("renderProfile", "STANDARD_SHORTS"),
+            "fps": subtitle_meta.get("fps", 24),
+            "resolution": subtitle_meta.get("resolution", "720x1280"),
+            "timings": timings,
+            "cache": {"hits": cache_hits, "misses": cache_misses},
+        }
+        result_json_path = out_dir / "result.json"
+        try:
+            result_json_path.write_text(json.dumps(result_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+            print(f"[Worker] Wrote completion metadata to {result_json_path}")
+        except Exception as json_err:
+            print(f"[Worker] Warning: Failed to write result.json: {json_err}")
     except Exception as e:
         print(f"[ERROR][Cloudinary/Firebase] Upload or Firestore update failed: {e}")
         try:
@@ -200,7 +238,7 @@ def _finalize_render_and_upload(
             shutil.rmtree(str(images_dir), ignore_errors=True)
         except Exception:
             pass
-    for local_file in [out_final, out_thumbnail, out_srt]:
+    for local_file in [out_final, out_thumbnail, out_srt, out_dir / "audio.wav"]:
         if local_file.exists():
             try:
                 local_file.unlink()
@@ -212,114 +250,83 @@ def _run(cmd: list[str], *, cwd: Path | None = None) -> None:
     subprocess.run(cmd, check=True, cwd=str(cwd) if cwd else None)
 
 
-def _edge_tts(text: str, out_wav: Path, voice: str = "en-US-GuyNeural", rate: str | None = None) -> None:
-    """Generate edge-tts audio into TEMP then copy bytes into final contract file.
-
-    Windows sometimes keeps a lock on edge-tts fresh output; this function
-    avoids file-move style operations by using a temp filename and binary copy.
-
+def _edge_tts(text: str, out_wav: Path, voice: str = "en-US-ChristopherNeural", rate: str | None = None) -> None:
+    """Generates high-quality neural TTS audio from text using edge-tts library asynchronously.
+    Bypasses external GPU requirements entirely.
     """
-
-    import shutil as _shutil
+    import asyncio
+    import edge_tts
     import time as _sleep
+    import uuid
 
     out_wav.parent.mkdir(parents=True, exist_ok=True)
 
-    # STEP 2 fix: always generate to a temp/ file first.
-    temp_dir = out_wav.parent / "temp"
-    temp_dir.mkdir(parents=True, exist_ok=True)
+    # Resolve shared memory path for temporary MP3 synthesis to prevent disk write
+    shm_dir = Path("/dev/shm")
+    if not shm_dir.exists():
+        shm_dir = out_wav.parent / "temp"
+    shm_dir.mkdir(parents=True, exist_ok=True)
+    temp_audio = shm_dir / f"temp_audio_{uuid.uuid4().hex}.mp3"
 
-    temp_audio = temp_dir / "temp_audio"
-    # edge-tts can create either extensionless or .wav; we probe for both.
-    temp_prefix = temp_audio  # edge-tts uses --write-media prefix
+    async def _async_compile():
+        r = rate if rate else "+0%"
+        communicate = edge_tts.Communicate(text, voice, rate=r)
+        await communicate.save(str(temp_audio))
 
-    # Invoke edge-tts with retry logic for network resilience.
-    cmd = [
-        "edge-tts",
-        "--text",
-        text,
-        "--voice",
-        voice,
-        "--write-media",
-        str(temp_prefix),
-    ]
-    if rate:
-        cmd.extend(["--rate", rate])
-    
-    max_retries = 3
-    for attempt in range(max_retries):
-        try:
-            _run(cmd)
-            break
-        except Exception as e:
-            if attempt == max_retries - 1:
-                print(f"[EDGE-TTS] Failed after {max_retries} attempts: {e}")
-                raise
-            sleep_time = 2 ** attempt
-            print(f"[EDGE-TTS] Attempt {attempt + 1} failed. Retrying in {sleep_time}s... Error: {e}")
-            _sleep.sleep(sleep_time)
+    try:
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                asyncio.run(_async_compile())
+                break
+            except Exception as e:
+                if attempt == max_retries - 1:
+                    print(f"[EDGE-TTS] Failed after {max_retries} attempts: {e}")
+                    raise
+                sleep_time = 2 ** attempt
+                print(f"[EDGE-TTS] Attempt {attempt + 1} failed. Retrying in {sleep_time}s... Error: {e}")
+                _sleep.sleep(sleep_time)
 
-    generated_wav = temp_prefix.with_suffix(".wav")
-    generated_extless = temp_prefix
+        if not temp_audio.exists():
+            raise RuntimeError(f"[STEP 2] edge-tts temp output {temp_audio} does not exist.")
 
-    def _is_readable_file(p: Path) -> bool:
-        try:
-            if not p.exists() or p.stat().st_size <= 0:
-                return False
-            # Can we open it for binary read?
-            with open(p, "rb") as f:
-                f.read(1)
-            return True
-        except Exception:
-            return False
+        temp_size = temp_audio.stat().st_size
+        print(f"[AUDIO] temp readable: {temp_audio.as_posix()} (size={temp_size})")
 
-    # STEP 2 verification polling: wait until temp audio becomes readable.
-    temp_candidate: Path | None = None
-    for _attempt in range(40):  # ~10 seconds total (0.25s*40)
-        if _is_readable_file(generated_wav):
-            temp_candidate = generated_wav
-            break
-        if _is_readable_file(generated_extless):
-            temp_candidate = generated_extless
-            break
-        _sleep.sleep(0.25)
+        minimal_threshold = 256  # bytes
+        if temp_size < minimal_threshold:
+            raise RuntimeError(
+                f"[STEP 2] Invalid temp audio size={temp_size} bytes (<{minimal_threshold})."
+            )
 
-    if temp_candidate is None:
-        raise RuntimeError(
-            "[STEP 2] edge-tts temp output never became readable. "
-            f"Tried: {generated_wav} and extless {generated_extless}."
-        )
+        # Copy bytes into final contract file
+        with open(temp_audio, "rb") as src:
+            with open(out_wav, "wb") as dst:
+                dst.write(src.read())
+                dst.flush()
+                os.fsync(dst.fileno())
 
-    temp_size = temp_candidate.stat().st_size
-    print(f"[AUDIO] temp readable: {temp_candidate.as_posix()} (size={temp_size})")
+        # Optional stabilization.
+        _sleep.sleep(0.75)
 
-    # Fail-fast validation before overwriting contract file.
-    minimal_threshold = 256  # bytes; adjust upward if needed
-    if temp_size < minimal_threshold:
-        raise RuntimeError(
-            f"[STEP 2] Invalid temp audio size={temp_size} bytes (<{minimal_threshold})."
-        )
+        if not out_wav.exists():
+            raise RuntimeError(f"[STEP 2] audio.wav copy failed: {out_wav} does not exist")
 
-    # STEP 3: copy bytes into final contract file WITHOUT rename/replace.
-    with open(temp_candidate, "rb") as src:
-        with open(out_wav, "wb") as dst:
-            dst.write(src.read())
-            dst.flush()
-            os.fsync(dst.fileno())
+        out_size = out_wav.stat().st_size
+        print(f"[AUDIO] copy success -> audio.wav: {out_wav.as_posix()} (size={out_size})")
+        if out_size < minimal_threshold:
+            raise RuntimeError(
+                f"[STEP 2] audio.wav invalid size={out_size} bytes (<{minimal_threshold})"
+            )
+    finally:
+        # Cleanup temp file from shared memory / temp directory
+        if temp_audio.exists():
+            try:
+                temp_audio.unlink()
+                print(f"[Cleanup] Cleaned up edge-tts temp file: {temp_audio}")
+            except Exception as clean_err:
+                print(f"[Cleanup] Error unlinking temp file {temp_audio}: {clean_err}")
 
-    # Optional stabilization.
-    _sleep.sleep(0.75)
-
-    # STEP 2 verification log + fail-fast after copy.
-    if not out_wav.exists():
-        raise RuntimeError(f"[STEP 2] audio.wav copy failed: {out_wav} does not exist")
-
-    out_size = out_wav.stat().st_size
-    print(f"[AUDIO] copy success -> audio.wav: {out_wav.as_posix()} (size={out_size})")
-    if out_size < minimal_threshold:
-        raise RuntimeError(
-            f"[STEP 2] audio.wav invalid size={out_size} bytes (<{minimal_threshold})"
-        )
 
 
 def _write_placeholder_image(out_png: Path, title: str) -> None:
@@ -634,255 +641,69 @@ def _assemble_video(
     subtitles_srt: Path,
     out_mp4: Path,
 ) -> dict:
-    # Pre-resize all source images to exactly 1080x1920 to avoid MoviePy scaling overhead
-    for img in images:
-        _preprocess_resize_image(img, 1080, 1920)
-
-    from moviepy.video.VideoClip import TextClip
-    from moviepy.video.compositing.CompositeVideoClip import CompositeVideoClip
-    from moviepy.video.VideoClip import ImageClip
-    from moviepy import AudioFileClip
-
-    from moviepy.video.tools.subtitles import SubtitlesClip
-
+    # Resolve profile
     RENDER_PROFILES = {
-        "FAST_PREVIEW": {
-            "fps": 18,
-            "width": 540,
-            "height": 960,
-            "moviepy_preset": "ultrafast",
-            "ffmpeg_threads": 2,
-            "subtitle_fontsize": 30,
-            "crossfade_dur": 0.35,
-        },
-        "LOW_MEMORY": {
-            "fps": 18,
-            "width": 540,
-            "height": 960,
-            "moviepy_preset": "ultrafast",
-            "ffmpeg_threads": 1,
-            "subtitle_fontsize": 30,
-            "crossfade_dur": 0.0,
-        },
-        "STANDARD_SHORTS": {
-            "fps": 24,
-            "width": 720,
-            "height": 1280,
-            "moviepy_preset": "medium",
-            "ffmpeg_threads": 2,
-            "subtitle_fontsize": 34,
-            "crossfade_dur": 0.4,
-        },
-        "STANDARD": {
-            "fps": 24,
-            "width": 720,
-            "height": 1280,
-            "moviepy_preset": "medium",
-            "ffmpeg_threads": 2,
-            "subtitle_fontsize": 34,
-            "crossfade_dur": 0.4,
-        },
-        "HIGH_QUALITY": {
-            "fps": 30,
-            "width": 1080,
-            "height": 1920,
-            "moviepy_preset": "slow",
-            "ffmpeg_threads": 2,
-            "subtitle_fontsize": 40,
-            "crossfade_dur": 0.45,
-        },
+        "FAST_PREVIEW": {"fps": 18, "width": 540, "height": 960},
+        "LOW_MEMORY": {"fps": 18, "width": 540, "height": 960},
+        "STANDARD_SHORTS": {"fps": 24, "width": 720, "height": 1280},
+        "STANDARD": {"fps": 24, "width": 720, "height": 1280},
+        "HIGH_QUALITY": {"fps": 30, "width": 1080, "height": 1920},
     }
-
     profile_key = str(render_profile or "STANDARD_SHORTS").strip() or "STANDARD_SHORTS"
     profile = RENDER_PROFILES.get(profile_key, RENDER_PROFILES["STANDARD_SHORTS"])
-
+    
     total_duration = _load_total_duration_from_srt(subtitles_srt)
-
+    
+    # Pre-resize images to target width/height
+    target_w, target_h = int(profile["width"]), int(profile["height"])
+    for img in images:
+        _preprocess_resize_image(img, target_w, target_h)
+        
+    ffmpeg_exe = os.environ.get("IMAGEIO_FFMPEG_EXE", "ffmpeg")
+    
+    # Construct slideshow inputs
     n = max(1, len(images))
     per = total_duration / n
-
-    clips = []
-
-    MOTION_ARCHETYPES = {
-        "cinematic_drift": {
-            "zoom_min": 1.00,
-            "zoom_max": 1.07,
-            "pan_strength": 0.030,
-            "drift_freq": 0.20,
-            "drift_amp": 0.55,
-        },
-        "slow_push_in": {
-            "zoom_min": 1.02,
-            "zoom_max": 1.10,
-            "pan_strength": 0.020,
-            "drift_freq": 0.12,
-            "drift_amp": 0.35,
-        },
-        "documentary_pan": {
-            "zoom_min": 1.00,
-            "zoom_max": 1.06,
-            "pan_strength": 0.040,
-            "drift_freq": 0.18,
-            "drift_amp": 0.20,
-        },
-        "floating_motion": {
-            "zoom_min": 1.00,
-            "zoom_max": 1.08,
-            "pan_strength": 0.025,
-            "drift_freq": 0.25,
-            "drift_amp": 0.70,
-        },
-    }
-
-    archetype_keys = list(MOTION_ARCHETYPES.keys())
-    target_w, target_h = int(profile["width"]), int(profile["height"])
-
-    for i, img in enumerate(images):
-        duration = per
-        if i == n - 1:
-            duration = max(0.1, total_duration - per * (n - 1))
-
-        base = ImageClip(str(img)).with_duration(duration)
-        w, h = base.size
-
-        import hashlib
-        import math
-
-        def _hash01(s: str) -> float:
-            hv = hashlib.sha256(s.encode("utf-8")).hexdigest()
-            return (int(hv[:8], 16) % 10_000_000) / 10_000_000
-
-        motion_seed = f"{job_id}::scene::{i}::{str(img)}"
-
-        rk = archetype_keys[int(_hash01(motion_seed + "::archetype") * len(archetype_keys)) % len(archetype_keys)]
-        arch = MOTION_ARCHETYPES[rk]
-
-        pan_dir = -1 if _hash01(motion_seed + "::panDir") < 0.5 else 1
-        vert_dir = -1 if _hash01(motion_seed + "::vertDir") < 0.5 else 1
-        zoom_dir = 1 if _hash01(motion_seed + "::zoomDir") < 0.5 else -1
-
-        pan_px = max(6, int(min(w, h) * 0.02)) * (1.0 + 0.25 * _hash01(motion_seed + "::panAmp"))
-        pan_px = pan_px * pan_dir * float(arch["pan_strength"] / 0.03)
-
-        cx = (w / 2) - (target_w / 2)
-        cy = (h / 2) - (target_h / 2)
-
-        drift_phase = _hash01(motion_seed + "::driftPhase") * 2 * math.pi
-        drift_freq = float(arch["drift_freq"]) * (0.85 + 0.3 * _hash01(motion_seed + "::driftFreqVar"))
-        drift_amp = float(arch["drift_amp"]) * (0.65 + 0.5 * _hash01(motion_seed + "::driftAmpVar"))
-
-        def zoom(t, _dur=duration):
-            if _dur <= 0:
-                return 1.0
-            fx = max(0.0, min(1.0, t / _dur))
-
-            z0 = float(arch["zoom_min"])
-            z1 = float(arch["zoom_max"])
-            base_z = z0 + (z1 - z0) * fx
-
-            if zoom_dir < 0:
-                base_z = z1 - (z1 - z0) * fx
-
-            base_z += 0.004 * math.sin(2 * math.pi * fx + _hash01(motion_seed + "::phase") * 10)
-            return max(1.0, min(1.18, base_z))
-
-        moved = base.resized(lambda t: zoom(t))
-
-        def _pos(t, _cx=cx, _cy=cy, _dur=duration, _pan=pan_px, _vdir=vert_dir):
-            if _dur <= 0:
-                return (_cx, _cy)
-            fx = t / _dur
-            x = _cx + _pan * (2 * fx - 1)
-            y_drift = drift_amp * abs(_pan) * 0.02 * math.sin((2 * math.pi * drift_freq * fx) + drift_phase)
-            y = _cy + (_pan * 0.08 * _vdir) * math.sin(math.pi * fx) + y_drift
-            return (x, y)
-
-        moved_cropped = moved.crop(
-            x1=lambda t: _pos(t)[0],
-            y1=lambda t: _pos(t)[1],
-            x2=lambda t: _pos(t)[0] + target_w,
-            y2=lambda t: _pos(t)[1] + target_h,
-        )
-
-        clips.append(moved_cropped)
-
-    crossfade_dur = float(profile["crossfade_dur"])
-
-    if len(clips) == 1:
-        video = clips[0].with_audio(AudioFileClip(str(audio_wav)))
+    
+    cmd = [ffmpeg_exe, "-y"]
+    filter_concat = ""
+    for idx, img in enumerate(images):
+        cmd.extend(["-loop", "1", "-t", f"{per:.3f}", "-i", str(img)])
+        filter_concat += f"[{idx}:v]"
+        
+    # Add audio input
+    audio_idx = len(images)
+    cmd.extend(["-i", str(audio_wav)])
+    
+    # Escape subtitles path
+    sub_path_escaped = str(subtitles_srt.resolve()).replace("\\", "/").replace(":", "\\:").replace("'", "'\\''")
+    
+    # Build filter complex
+    if len(images) > 1:
+        filter_concat += f"concat=n={len(images)}:v=1:a=0[v_slideshow];"
+        sub_input = "[v_slideshow]"
     else:
-        composite_clips = []
-        current = clips[0]
-        for idx in range(1, len(clips)):
-            nxt = clips[idx]
-            overlap = min(crossfade_dur, current.duration / 2, nxt.duration / 2)
-            current_end = current.duration
-
-            if overlap > 0:
-                current = current.crossfadeout(overlap)
-                nxt = nxt.crossfadein(overlap)
-                nxt = nxt.set_start(current_end - overlap)
-            else:
-                nxt = nxt.set_start(current_end)
-
-            composite_clips.append(current)
-            current = nxt
-
-        composite_clips.append(current)
-
-        video = CompositeVideoClip(composite_clips, size=(target_w, target_h)).with_audio(
-            AudioFileClip(str(audio_wav)).subclip(0, total_duration)
-        )
-
-    subtitleOverlay = "FALLBACK"
-
-    try:
-        last_err = None
-        for font_candidate in _get_windows_font_candidates():
-            try:
-                def generator(txt: str, _font=font_candidate):
-                    return (
-                        TextClip(
-                            txt,
-                            font=_font,
-                            fontsize=int(profile["subtitle_fontsize"]),
-                            color="white",
-                            stroke_color="black",
-                            stroke_width=2,
-                            method="caption",
-                            size=(video.w * 0.9, None),
-                        ).set_position(("center", "bottom"))
-                    )
-
-                subs = SubtitlesClip(str(subtitles_srt), generator)
-                subs = subs.set_duration(video.duration)
-                final = CompositeVideoClip([video, subs])
-                subtitleOverlay = "WORKING"
-                break
-            except Exception as e:
-                last_err = e
-                continue
-        else:
-            final = video
-    except Exception:
-        final = video
-
-    out_mp4.parent.mkdir(parents=True, exist_ok=True)
-
-    import os
-    final_threads = os.cpu_count() or 4
-    final.write_videofile(
-        str(out_mp4),
-        fps=profile["fps"],
-        codec="libx264",
-        audio_codec="aac",
-        threads=final_threads,
-        preset="ultrafast",
-        logger=None,
-    )
-
+        sub_input = "[0:v]"
+        
+    filter_complex = f"{filter_concat}{sub_input}subtitles='{sub_path_escaped}':force_style='FontSize=16'[v_final]"
+    
+    cmd.extend([
+        "-filter_complex", filter_complex,
+        "-map", "[v_final]",
+        "-map", f"{audio_idx}:a",
+        "-c:v", "libx264",
+        "-preset", "ultrafast",
+        "-r", str(profile["fps"]),
+        "-c:a", "aac",
+        "-y",
+        str(out_mp4)
+    ])
+    
+    print("Running FFmpeg assemble:", " ".join(cmd))
+    subprocess.run(cmd, check=True)
+    
     return {
-        "subtitleOverlay": subtitleOverlay,
+        "subtitleOverlay": "WORKING",
         "renderProfile": profile_key,
         "fps": profile["fps"],
         "resolution": f"{target_w}x{target_h}",
@@ -906,15 +727,129 @@ def get_font(font_name: str, size: int):
             return ImageFont.load_default()
 
 
+def _process_flag_background(flag_url: str, out_path: Path) -> bool:
+    import requests
+    from PIL import Image, ImageFilter, ImageEnhance
+    temp_flag = out_path.parent / "temp_flag_raw.png"
+    try:
+        print(f"[Pillow] Downloading flag image: {flag_url}")
+        resp = requests.get(flag_url, timeout=30)
+        if resp.status_code >= 300:
+            print(f"[Pillow] Failed to download flag: HTTP {resp.status_code}")
+            return False
+        
+        temp_flag.write_bytes(resp.content)
+        
+        with Image.open(temp_flag) as img:
+            target_w, target_h = 1080, 1920
+            img_w, img_h = img.size
+            scale = max(target_w / img_w, target_h / img_h)
+            new_w = int(img_w * scale)
+            new_h = int(img_h * scale)
+            img_resized = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+            
+            x_offset = (new_w - target_w) // 2
+            y_offset = (new_h - target_h) // 2
+            img_cropped = img_resized.crop((x_offset, y_offset, x_offset + target_w, y_offset + target_h))
+            
+            img_blurred = img_cropped.filter(ImageFilter.GaussianBlur(radius=25))
+            
+            enhancer = ImageEnhance.Brightness(img_blurred)
+            img_final = enhancer.enhance(0.7)
+            
+            img_final.convert("RGBA").save(out_path)
+            print(f"[Pillow] Processed background flag saved to {out_path}")
+        return True
+    except Exception as e:
+        print(f"[Pillow] Warning: Failed to process flag background: {e}")
+        return False
+    finally:
+        if temp_flag.exists():
+            try:
+                temp_flag.unlink()
+            except Exception:
+                pass
+
+
+async def _async_generate_tts_mp3(text: str, voice: str, rate: str, out_mp3: Path) -> None:
+    """Generates a single TTS audio clip as an MP3 asynchronously.
+    Includes network retry logic for robustness.
+    """
+    import edge_tts
+    import asyncio
+    
+    r = rate if rate else "+0%"
+    communicate = edge_tts.Communicate(text, voice, rate=r)
+    
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            await communicate.save(str(out_mp3))
+            
+            # Verify file exists and is readable
+            if out_mp3.exists() and out_mp3.stat().st_size >= 256:
+                return
+            raise RuntimeError(f"Generated MP3 file too small or empty: {out_mp3}")
+        except Exception as e:
+            if attempt == max_retries - 1:
+                print(f"[EDGE-TTS] Failed concurrent generation of {out_mp3.name} after {max_retries} attempts: {e}")
+                raise
+            sleep_time = 2 ** attempt
+            print(f"[EDGE-TTS] Attempt {attempt + 1} failed for {out_mp3.name}. Retrying in {sleep_time}s... Error: {e}")
+            await asyncio.sleep(sleep_time)
+
+def _ensure_audio_assets(engine_root: Path) -> dict:
+    assets_dir = engine_root / "assets" / "audio"
+    assets_dir.mkdir(parents=True, exist_ok=True)
+    
+    pop_wav = assets_dir / "pop.wav"
+    ding_wav = assets_dir / "ding.wav"
+    bgm_wav = assets_dir / "bgm.wav"
+    
+    ffmpeg_exe = os.environ.get("IMAGEIO_FFMPEG_EXE", "ffmpeg")
+    
+    if not pop_wav.exists():
+        subprocess.run([ffmpeg_exe, "-y", "-f", "lavfi", "-i", "aevalsrc='sin(400*2*PI*t)*exp(-15*t)':d=0.15", str(pop_wav)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    if not ding_wav.exists():
+        subprocess.run([ffmpeg_exe, "-y", "-f", "lavfi", "-i", "aevalsrc='sin(800*2*PI*t)*exp(-4*t)+sin(1200*2*PI*t)*exp(-4*t)':d=0.8", str(ding_wav)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    if not bgm_wav.exists():
+        subprocess.run([ffmpeg_exe, "-y", "-f", "lavfi", "-i", "aevalsrc='sin(60*2*PI*t)*0.1':d=10", str(bgm_wav)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        
+    return {
+        "pop": pop_wav,
+        "ding": ding_wav,
+        "bgm": bgm_wav
+    }
+
 def run_quiz_shorts(job: dict, out_dir: Path, out_audio: Path, out_srt: Path, out_final: Path, out_thumbnail: Path, timings: dict) -> dict:
     import wave
     import numpy as np
     from PIL import Image, ImageDraw, ImageFont
-    from moviepy.video.VideoClip import VideoClip
-    from moviepy import AudioFileClip
+    import os
+    import time
+    import shutil
+    import asyncio
+    import subprocess
+    import textwrap
+    import uuid
+    import cloudinary.uploader
+
+    total_start = time.perf_counter()
 
     topic = str(job.get("topic", ""))
-    quiz_data = job.get("quizData", {})
+    quiz_data = job.get("quizData")
+    if not quiz_data:
+        quiz_data = {
+            "hook": job.get("hook") or job.get("script") or "Let's test your knowledge.",
+            "questions": job.get("questions", []),
+            "title": job.get("title", ""),
+            "description": job.get("description", ""),
+            "hashtags": job.get("hashtags", []),
+            "flagUrl": job.get("flagUrl"),
+            "voiceCode": job.get("voiceCode"),
+            "gradingScale": job.get("gradingScale"),
+        }
+
     job_id = str(job.get("jobId") or out_dir.name)
 
     topic_lower = topic.lower()
@@ -926,484 +861,750 @@ def run_quiz_shorts(job: dict, out_dir: Path, out_audio: Path, out_srt: Path, ou
         theme = "science_theme"
     elif "sports" in topic_lower or "football" in topic_lower or "olympic" in topic_lower or "game" in topic_lower:
         theme = "sports_theme"
-    elif "history" in topic_lower or "world" in topic_lower:
-        theme = "world_theme"
     else:
         theme = "world_theme"
-
-    script_parent = Path(__file__).resolve().parent
-    engine_root = script_parent.parent
-    
-    if "vps-rendering-engine" in str(script_parent.resolve()):
-        bg_path = engine_root / "assets" / "backgrounds" / f"{theme}.png"
-        if not bg_path.exists():
-            bg_path = engine_root / "assets" / "backgrounds" / "world_theme.png"
-    else:
-        repo_root = script_parent.parent
-        bg_path = repo_root / "hybrid-video" / "assets" / "backgrounds" / f"{theme}.png"
-        if not bg_path.exists():
-            bg_path = repo_root / "hybrid-video" / "assets" / "backgrounds" / "world_theme.png"
-
-    print(f"[QUIZ] Selected background theme: {theme} (path: {bg_path.as_posix()})")
 
     temp_dir = out_dir / "temp"
     temp_dir.mkdir(parents=True, exist_ok=True)
 
-    step2_start = time.time()
-    ffmpeg_exe = os.environ.get("IMAGEIO_FFMPEG_EXE", "ffmpeg")
+    shm_root = Path("/dev/shm")
+    if shm_root.exists() and os.name != "nt":
+        shm_dir = shm_root
+    else:
+        shm_dir = temp_dir
 
-    def generate_tts_wav(text, out_wav_path, rate=None):
-        temp_mp3 = out_wav_path.with_suffix(".mp3")
-        _edge_tts(text, temp_mp3, rate=rate)
-        _run([ffmpeg_exe, "-i", str(temp_mp3), "-acodec", "pcm_s16le", "-ar", "24000", "-ac", "1", "-y", str(out_wav_path)])
+    created_files = set()
+
+    def get_audio_duration(path: Path) -> float:
+        # Fast path: try mutagen header read (no subprocess, ~1ms)
         try:
-            temp_mp3.unlink()
+            from mutagen.mp3 import MP3
+            audio = MP3(str(path))
+            dur = audio.info.length
+            if dur and dur > 0.0:
+                return dur
         except Exception:
             pass
 
-    silence1_path = temp_dir / "silence1.wav"
-    silence2_path = temp_dir / "silence2.wav"
+        # Medium path: ffprobe
+        ffprobe = shutil.which("ffprobe")
+        if ffprobe:
+            try:
+                cmd = [
+                    ffprobe,
+                    "-v", "error",
+                    "-show_entries", "format=duration",
+                    "-of", "default=noprint_wrappers=1:nokey=1",
+                    str(path)
+                ]
+                res = subprocess.run(cmd, capture_output=True, text=True, check=True)
+                return float(res.stdout.strip())
+            except Exception as e:
+                print(f"[get_audio_duration] ffprobe check failed: {e}")
 
-    _run([ffmpeg_exe, "-f", "lavfi", "-i", "anullsrc=r=24000:cl=mono", "-t", "0.3", "-y", str(silence1_path)])
-    _run([ffmpeg_exe, "-f", "lavfi", "-i", "anullsrc=r=24000:cl=mono", "-t", "1.0", "-y", str(silence2_path)])
+        # Fallback: convert MP3 to WAV using ffmpeg and read WAV duration
+        ffmpeg_exe = os.environ.get("IMAGEIO_FFMPEG_EXE", "ffmpeg")
+        import wave
+        temp_wav = path.parent / f"temp_{path.stem}_dur.wav"
+        try:
+            cmd = [ffmpeg_exe, "-y", "-i", str(path), "-ac", "1", "-ar", "24000", str(temp_wav)]
+            subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+            with wave.open(str(temp_wav), 'rb') as f:
+                return f.getnframes() / float(f.getframerate())
+        except Exception as e:
+            print(f"[get_audio_duration] Fallback failed: {e}")
+            return 5.0
+        finally:
+            if temp_wav.exists():
+                try:
+                    temp_wav.unlink()
+                except Exception:
+                    pass
 
-    hook_path = temp_dir / "hook.wav"
-    generate_tts_wav(quiz_data.get("hook", "Let's test your knowledge."), hook_path, rate="+20%")
+    def escape_ffmpeg_text(text: str) -> str:
+        t = text.replace('\\', '\\\\').replace("'", "'\\''").replace(':', '\\:').replace('%', '\\%')
+        t = t.replace('\n', '\r')
+        return t
 
-    questions = quiz_data.get("questions", [])
-    for idx, q in enumerate(questions):
-        num = idx + 1
-        q_wav_path = temp_dir / f"q{num}.wav"
-        a_wav_path = temp_dir / f"a{num}.wav"
-        exp_wav_path = temp_dir / f"exp{num}.wav"
+    def get_ffmpeg_font() -> str:
+        candidates = [
+            "C:/Windows/Fonts/ariblk.ttf",
+            "C:/Windows/Fonts/impact.ttf",
+            "C:/Windows/Fonts/arial.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+            "arial.ttf",
+            "Arial"
+        ]
+        for c in candidates:
+            if Path(c).exists():
+                return c
+        return "Arial"
 
-        q_narr = f"Question {num}. {q['question']}"
-        a_narr = f"{q['answer']}"
-        exp_narr = q.get("explanation", "").strip()
+    try:
+        ramdisk_start = time.perf_counter()
+        flag_url = quiz_data.get("flagUrl")
+        flag_bg_path = shm_dir / f"quiz_{job_id}_temp_bg.png"
+        processed_flag = False
+        if flag_url:
+            processed_flag = _process_flag_background(flag_url, flag_bg_path)
+            if processed_flag:
+                created_files.add(flag_bg_path)
 
-        generate_tts_wav(q_narr, q_wav_path, rate="+25%")
-        generate_tts_wav(a_narr, a_wav_path, rate="+20%")
-        if exp_narr:
-            generate_tts_wav(exp_narr, exp_wav_path, rate="+20%")
+        if not processed_flag:
+            script_parent = Path(__file__).resolve().parent
+            engine_root = script_parent.parent
+            if "vps-rendering-engine" in str(script_parent.resolve()):
+                fallback_bg = engine_root / "assets" / "backgrounds" / f"{theme}.png"
+                if not fallback_bg.exists():
+                    fallback_bg = engine_root / "assets" / "backgrounds" / "world_theme.png"
+            else:
+                repo_root = script_parent.parent
+                fallback_bg = repo_root / "hybrid-video" / "assets" / "backgrounds" / f"{theme}.png"
+                if not fallback_bg.exists():
+                    fallback_bg = repo_root / "hybrid-video" / "assets" / "backgrounds" / "world_theme.png"
+            shutil.copyfile(str(fallback_bg), str(flag_bg_path))
+            created_files.add(flag_bg_path)
 
-    outro_path = temp_dir / "outro.wav"
-    generate_tts_wav("How many did you get right? Comment your score below!", outro_path, rate="+20%")
+        script_parent = Path(__file__).resolve().parent
+        engine_root = script_parent.parent
+        if "vps-rendering-engine" not in str(script_parent.resolve()):
+            engine_root = script_parent.parent / "hybrid-video"
+        audio_assets = _ensure_audio_assets(engine_root)
 
-    concat_txt_path = temp_dir / "concat.txt"
-    with open(concat_txt_path, "w", encoding="utf-8") as f:
-        def p(path):
-            return str(path.resolve()).replace("\\", "/")
-        f.write(f"file '{p(hook_path)}'\n")
-        f.write(f"file '{p(silence1_path)}'\n")
-        for idx in range(len(questions)):
-            num = idx + 1
-            f.write(f"file '{p(temp_dir / f'q{num}.wav')}'\n")
-            f.write(f"file '{p(silence2_path)}'\n")
-            f.write(f"file '{p(temp_dir / f'a{num}.wav')}'\n")
-            exp_wav_path = temp_dir / f"exp{num}.wav"
-            if exp_wav_path.exists() and exp_wav_path.stat().st_size > 100:
-                f.write(f"file '{p(silence1_path)}'\n")
-                f.write(f"file '{p(exp_wav_path)}'\n")
-            f.write(f"file '{p(silence1_path)}'\n")
-        f.write(f"file '{p(outro_path)}'\n")
+        print(f"[QUIZ] Selected background path: {flag_bg_path.as_posix()}")
+        print(f"[PERF METRIC - RAMDISK]: Flag background Pillow processing completed in {time.perf_counter() - ramdisk_start:.2f} seconds.")
 
-    _run([ffmpeg_exe, "-f", "concat", "-safe", "0", "-i", str(concat_txt_path), "-c", "copy", "-y", str(out_audio)])
-    print("[STEP 2] Audio complete")
-    timings["step2_audio_sec"] = time.time() - step2_start
+        tts_start = time.perf_counter()
+        ffmpeg_exe = os.environ.get("IMAGEIO_FFMPEG_EXE", "ffmpeg")
 
-    def get_wav_duration(path):
-        with wave.open(str(path), 'rb') as f:
-            return f.getnframes() / float(f.getframerate())
+        voice_code = quiz_data.get("voiceCode") or job.get("voiceCode") or "en-US-AriaNeural"
+        country_lower = str(job.get("country", "")).lower()
+        if not quiz_data.get("voiceCode") and not job.get("voiceCode"):
+            if "united kingdom" in country_lower or "uk" in country_lower:
+                voice_code = "en-GB-RyanNeural"
+            elif "india" in country_lower:
+                voice_code = "en-IN-PrabhatNeural"
+            elif "japan" in country_lower:
+                voice_code = "ja-JP-KeitaNeural"
 
-    events = []
-    t = 0.0
-
-    hook_dur = get_wav_duration(hook_path)
-    events.append({
-        "type": "hook",
-        "start": t,
-        "end": t + hook_dur,
-        "text": quiz_data.get("hook", "")
-    })
-    t += hook_dur
-    t += 0.3
-
-    for idx, q in enumerate(questions):
-        num = idx + 1
-        q_path = temp_dir / f"q{num}.wav"
-        a_path = temp_dir / f"a{num}.wav"
-        exp_path = temp_dir / f"exp{num}.wav"
-
-        q_dur = get_wav_duration(q_path)
-        a_dur = get_wav_duration(a_path)
-        exp_dur = get_wav_duration(exp_path) if exp_path.exists() else 0.0
-
-        q_start = t
-        q_end = t + q_dur
-        think_start = q_end
-        think_end = think_start + 1.0
-        a_start = think_end
-        a_end = a_start + a_dur
-
-        events.append({
-            "type": "question",
-            "q_num": num,
-            "start": q_start,
-            "end": q_end,
-            "question": q["question"],
-            "options": q["options"],
-            "answer": q["answer"],
-            "difficulty": q["difficulty"]
+        tts_requests = []
+        hook_mp3 = shm_dir / f"quiz_{job_id}_hook.mp3"
+        tts_requests.append({
+            "text": quiz_data.get("hook", "Let's test your knowledge."),
+            "mp3": hook_mp3,
+            "rate": "+20%"
         })
-        events.append({
-            "type": "think",
-            "q_num": num,
-            "start": think_start,
-            "end": think_end,
-            "question": q["question"],
-            "options": q["options"],
-            "answer": q["answer"],
-            "difficulty": q["difficulty"]
-        })
-        
-        if exp_dur > 0:
-            exp_start = a_end + 0.3
-            exp_end = exp_start + exp_dur
-            events.append({
-                "type": "answer",
-                "q_num": num,
-                "start": a_start,
-                "end": a_end,
-                "question": q["question"],
-                "options": q["options"],
-                "answer": q["answer"],
-                "difficulty": q["difficulty"]
-            })
-            events.append({
-                "type": "explanation",
-                "q_num": num,
-                "start": exp_start,
-                "end": exp_end,
-                "question": q["question"],
-                "options": q["options"],
-                "answer": q["answer"],
-                "explanation": q.get("explanation", ""),
-                "difficulty": q["difficulty"]
-            })
-            t = exp_end + 0.3
-        else:
-            events.append({
-                "type": "answer",
-                "q_num": num,
-                "start": a_start,
-                "end": a_end,
-                "question": q["question"],
-                "options": q["options"],
-                "answer": q["answer"],
-                "difficulty": q["difficulty"]
-            })
-            t = a_end + 0.3
 
-    outro_dur = get_wav_duration(outro_path)
-    events.append({
-        "type": "outro",
-        "start": t,
-        "end": t + outro_dur,
-        "text": "How many did you get right? Comment your score below!"
-    })
-    t += outro_dur
-    total_duration = t
-
-    # 4. Generate subtitles.srt
-    step3_start = time.time()
-    def fmt_srt_time(seconds):
-        hh = int(seconds // 3600)
-        mm = int((seconds % 3600) // 60)
-        ss = int(seconds % 60)
-        ms = int(round((seconds - int(seconds)) * 1000))
-        if ms > 999: ms = 999
-        return f"{hh:02d}:{mm:02d}:{ss:02d},{ms:03d}"
-
-    with open(out_srt, "w", encoding="utf-8") as f:
-        f.write("1\n")
-        f.write(f"{fmt_srt_time(0.0)} --> {fmt_srt_time(hook_dur)}\n")
-        f.write(f"{quiz_data.get('hook', '')}\n\n")
-
-        srt_idx = 2
+        questions = quiz_data.get("questions", [])
+        # Rapid mode: ≤8 questions → 2s think time, faster speech, no explanations
+        is_rapid = len(questions) <= 8
+        rapid_rate = "+35%" if is_rapid else "+25%"
         for idx, q in enumerate(questions):
             num = idx + 1
-            q_ev = [e for e in events if e["type"] == "question" and e["q_num"] == num][0]
-            f.write(f"{srt_idx}\n")
-            f.write(f"{fmt_srt_time(q_ev['start'])} --> {fmt_srt_time(q_ev['end'])}\n")
-            f.write(f"Question {num}. {q['question']}\n\n")
-            srt_idx += 1
+            q_mp3 = shm_dir / f"quiz_{job_id}_q{num}.mp3"
+            a_mp3 = shm_dir / f"quiz_{job_id}_a{num}.mp3"
+            exp_mp3 = shm_dir / f"quiz_{job_id}_exp{num}.mp3"
 
-            a_ev = [e for e in events if e["type"] == "answer" and e["q_num"] == num][0]
-            f.write(f"{srt_idx}\n")
-            f.write(f"{fmt_srt_time(a_ev['start'])} --> {fmt_srt_time(a_ev['end'])}\n")
-            f.write(f"The correct answer is {q['answer']}.\n\n")
-            srt_idx += 1
+            q_narr = f"Question {num}. {q['question']}"
+            a_narr = f"{q['answer']}" if "answer" in q else f"{q['options'][q['answerIndex']]}"
+            exp_narr = q.get("explanation", "").strip() if not is_rapid else ""
 
-            exp_evs = [e for e in events if e["type"] == "explanation" and e["q_num"] == num]
-            if exp_evs:
-                exp_ev = exp_evs[0]
+            tts_requests.append({"text": q_narr, "mp3": q_mp3, "rate": rapid_rate})
+            tts_requests.append({"text": a_narr, "mp3": a_mp3, "rate": "+25%"})
+            if exp_narr:
+                tts_requests.append({"text": exp_narr, "mp3": exp_mp3, "rate": "+20%"})
+
+        outro_mp3 = shm_dir / f"quiz_{job_id}_outro.mp3"
+        tts_requests.append({
+            "text": "For more quizzes, subscribe and comment your score below!",
+            "mp3": outro_mp3,
+            "rate": "+20%"
+        })
+
+        async def run_concurrent_tts():
+            tasks = []
+            for req in tts_requests:
+                created_files.add(req["mp3"])
+                tasks.append(
+                    asyncio.create_task(
+                        _async_generate_tts_mp3(
+                            text=req["text"],
+                            voice=voice_code,
+                            rate=req["rate"],
+                            out_mp3=req["mp3"]
+                        )
+                    )
+                )
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            for res, req in zip(results, tts_requests):
+                if isinstance(res, Exception):
+                    raise RuntimeError(f"Concurrent TTS failed for segment text '{req['text']}': {res}")
+
+        asyncio.run(run_concurrent_tts())
+        print(f"[PERF METRIC - TTS]: Concurrency completed in {time.perf_counter() - tts_start:.2f} seconds.")
+
+        t = 0.0
+        hook_req = tts_requests[0]
+        hook_req["start_time"] = t
+        hook_req["duration"] = get_audio_duration(hook_req["mp3"])
+        t += hook_req["duration"] + 0.1
+
+        req_idx = 1
+        pop_delays = []
+        ding_delays = []
+        
+        for idx, q in enumerate(questions):
+            q_req = tts_requests[req_idx]
+            q_req["start_time"] = t
+            q_req["duration"] = get_audio_duration(q_req["mp3"])
+            t += q_req["duration"]
+            req_idx += 1
+
+            pop_delays.append(int(t * 1000))
+            q["think_start"] = t
+            q["think_duration"] = 2.0 if is_rapid else float(q.get("duration", 3.5))
+            q["think_end"] = q["think_start"] + q["think_duration"]
+            t = q["think_end"]
+            ding_delays.append(int(t * 1000))
+
+            a_req = tts_requests[req_idx]
+            a_req["start_time"] = t
+            a_req["duration"] = get_audio_duration(a_req["mp3"])
+            t += a_req["duration"]
+            req_idx += 1
+
+            exp_narr = q.get("explanation", "").strip() if not is_rapid else ""
+            if exp_narr:
+                t += 0.1
+                exp_req = tts_requests[req_idx]
+                exp_req["start_time"] = t
+                exp_req["duration"] = get_audio_duration(exp_req["mp3"])
+                t += exp_req["duration"]
+                req_idx += 1
+            t += 0.1
+
+        outro_req = tts_requests[req_idx]
+        outro_req["start_time"] = t
+        outro_req["duration"] = get_audio_duration(outro_req["mp3"])
+        t += outro_req["duration"]
+        total_duration = t
+
+        # Write subtitles.srt (to upload later)
+        step3_start = time.time()
+        def fmt_srt_time(seconds):
+            hh = int(seconds // 3600)
+            mm = int((seconds % 3600) // 60)
+            ss = int(seconds % 60)
+            ms = int(round((seconds - int(seconds)) * 1000))
+            if ms > 999: ms = 999
+            return f"{hh:02d}:{mm:02d}:{ss:02d},{ms:03d}"
+
+        with open(out_srt, "w", encoding="utf-8") as f:
+            f.write("1\n")
+            f.write(f"{fmt_srt_time(0.0)} --> {fmt_srt_time(hook_req['duration'])}\n")
+            f.write(f"{quiz_data.get('hook', '')}\n\n")
+
+            srt_idx = 2
+            req_idx = 1
+            for idx, q in enumerate(questions):
+                q_req = tts_requests[req_idx]
                 f.write(f"{srt_idx}\n")
-                f.write(f"{fmt_srt_time(exp_ev['start'])} --> {fmt_srt_time(exp_ev['end'])}\n")
-                f.write(f"{exp_ev['explanation']}\n\n")
+                q_end = q_req["start_time"] + q_req["duration"]
+                f.write(f"{fmt_srt_time(q_req['start_time'])} --> {fmt_srt_time(q_end)}\n")
+                f.write(f"Question {idx+1}. {q['question']}\n\n")
                 srt_idx += 1
+                req_idx += 1
 
-        outro_ev = [e for e in events if e["type"] == "outro"][0]
-        f.write(f"{srt_idx}\n")
-        f.write(f"{fmt_srt_time(outro_ev['start'])} --> {fmt_srt_time(outro_ev['end'])}\n")
-        f.write("How many did you get right? Comment your score below!\n\n")
+                a_req = tts_requests[req_idx]
+                f.write(f"{srt_idx}\n")
+                a_end = a_req["start_time"] + a_req["duration"]
+                f.write(f"{fmt_srt_time(a_req['start_time'])} --> {fmt_srt_time(a_end)}\n")
+                f.write(f"The correct answer is {q['answer'] if 'answer' in q else q['options'][q['answerIndex']]}.\n\n")
+                srt_idx += 1
+                req_idx += 1
 
-    print("[STEP 3] Subtitles complete")
-    timings["step3_subtitles_sec"] = time.time() - step3_start
+                exp_narr = q.get("explanation", "").strip() if not is_rapid else ""
+                if exp_narr:
+                    exp_req = tts_requests[req_idx]
+                    f.write(f"{srt_idx}\n")
+                    exp_end = exp_req["start_time"] + exp_req["duration"]
+                    f.write(f"{fmt_srt_time(exp_req['start_time'])} --> {fmt_srt_time(exp_end)}\n")
+                    f.write(f"{exp_narr}\n\n")
+                    srt_idx += 1
+                    req_idx += 1
 
-    # 5. Compile Video
-    step4_start = time.time()
-    target_w, target_h = 540, 960
+            outro_req = tts_requests[req_idx]
+            f.write(f"{srt_idx}\n")
+            outro_end = outro_req["start_time"] + outro_req["duration"]
+            f.write(f"{fmt_srt_time(outro_req['start_time'])} --> {fmt_srt_time(outro_end)}\n")
+            f.write("For more quizzes, subscribe and comment your score below!\n\n")
 
-    font_hook = get_font("arial.ttf", 32)
-    font_small = get_font("arial.ttf", 26)
-    font_large = get_font("arial.ttf", 24)
-    font_opt = get_font("arial.ttf", 20)
-    font_opt_bold = get_font("arial.ttf", 20)
-    try:
-        font_opt_bold = ImageFont.truetype("arialbd.ttf", 20)
-    except Exception:
-        pass
+        print("[STEP 3] Subtitles complete")
+        timings["step3_subtitles_sec"] = time.time() - step3_start
 
-    def draw_wrapped_text(draw, text, font, fill_color, max_width, y_center):
-        words = text.split()
-        lines = []
-        current_line = []
-        for word in words:
-            test_line = " ".join(current_line + [word])
-            w = draw.textlength(test_line, font=font)
-            if w < max_width:
-                current_line.append(word)
+        # 4. Generate thumbnail using Pillow on the background image
+        try:
+            shutil.copyfile(str(flag_bg_path), str(out_thumbnail))
+            print(f"[Thumbnail] Generated thumbnail at {out_thumbnail}")
+        except Exception as thumb_err:
+            print(f"[Thumbnail] Warning: Failed to copy background as thumbnail: {thumb_err}")
+
+        # 5. FFmpeg Filtergraph construction
+        ffmpeg_start = time.perf_counter()
+
+        filter_parts = []
+        
+        # Delay and label audio inputs
+        # Add SFX and BGM to mix (Audio indices shifted by 1 because of flag_bg_path)
+        for idx, req in enumerate(tts_requests):
+            inp_idx = idx + 2
+            delay_ms = int(req["start_time"] * 1000)
+            filter_parts.append(f"[{inp_idx}:a]adelay={delay_ms}|{delay_ms}:all=1[a_delayed_{inp_idx}]")
+
+        delayed_labels = "".join(f"[a_delayed_{i+2}]" for i in range(len(tts_requests)))
+        
+        pop_idx = len(tts_requests) + 2
+        ding_idx = len(tts_requests) + 3
+        bgm_idx = len(tts_requests) + 4
+        
+        num_q = len(questions)
+        sfx_mix_labels = ""
+        if num_q > 0:
+            filter_parts.append(f"[{pop_idx}:a]asplit={num_q}" + "".join(f"[pop_split_{i}]" for i in range(num_q)))
+            filter_parts.append(f"[{ding_idx}:a]asplit={num_q}" + "".join(f"[ding_split_{i}]" for i in range(num_q)))
+            for i in range(num_q):
+                filter_parts.append(f"[pop_split_{i}]adelay={pop_delays[i]}|{pop_delays[i]}:all=1[pop_d_{i}]")
+                filter_parts.append(f"[ding_split_{i}]adelay={ding_delays[i]}|{ding_delays[i]}:all=1[ding_d_{i}]")
+                sfx_mix_labels += f"[pop_d_{i}][ding_d_{i}]"
+
+        filter_parts.append(f"[{bgm_idx}:a]volume=0.1[bgm_vol]")
+        total_audio_inputs = len(tts_requests) + (num_q * 2) + 1
+        filter_parts.append(f"{delayed_labels}{sfx_mix_labels}[bgm_vol]amix=inputs={total_audio_inputs}:duration=longest:dropout_transition=0[a_mixed]")
+        
+        # 5. Render frames to PNGs in memory via Pillow (extremely fast, avoids Windows Font file I/O bottleneck in FFmpeg)
+        ffmpeg_start = time.perf_counter()
+        fps = 18
+        total_frames = int(total_duration * fps)
+        
+        frames_dir = temp_dir / "frames"
+        frames_dir.mkdir(parents=True, exist_ok=True)
+        
+        from PIL import Image, ImageDraw, ImageFont
+        import math
+        
+        # We no longer load the background into Pillow for Ken Burns.
+        # It will be rendered dynamically inside FFmpeg.
+            
+        font_path = get_ffmpeg_font()
+        font_hook = get_font(font_path, 54)
+        font_header = get_font(font_path, 42)
+        font_question = get_font(font_path, 48)
+        font_cnt = get_font(font_path, 72)
+        font_option = get_font(font_path, 36)
+        font_exp = get_font(font_path, 32)
+        
+        outro_scale = job.get("gradingScale", quiz_data.get("gradingScale", "0/8: Tourist. 8/8: True Citizen."))
+        font_outro_rank = get_font(font_path, 36)
+        font_outro_l1 = get_font(font_path, 48)
+        font_outro_l2 = get_font(font_path, 64)
+        font_outro_l3 = get_font(font_path, 42)
+
+        # Feature 6: Branding Presets — read dynamic config from job payload
+        _brand_cfg = job.get("brandConfig") or {}
+        _brand_text = str(_brand_cfg.get("watermarkText") or "").strip()
+        _brand_pos = str(_brand_cfg.get("watermarkPosition") or "top_right").strip()
+        _brand_primary = str(_brand_cfg.get("primaryColor") or "#6366f1").strip()
+        # Convert primary hex to RGBA tuple for Pillow
+        def _hex_to_rgba(hex_str: str, alpha: int = 180) -> tuple:
+            hex_str = hex_str.lstrip("#")
+            if len(hex_str) == 6:
+                r, g, b = int(hex_str[0:2], 16), int(hex_str[2:4], 16), int(hex_str[4:6], 16)
+                return (r, g, b, alpha)
+            return (99, 102, 241, alpha)  # fallback indigo
+        _brand_color_rgba = _hex_to_rgba(_brand_primary) if _brand_text else None
+        _font_watermark = get_font(font_path, 28) if _brand_text else None
+        print(f"[Brand] Watermark: '{_brand_text}' @ {_brand_pos} in color {_brand_primary}")
+        
+        # Draw high-retention text with thick borders and drop shadows
+        def draw_shadowed_text(draw, position, text, font, fill, stroke_width=4, stroke_color="black"):
+            x, y = position
+            # Heavy drop shadow: black at 60% opacity (offset by +5, +5)
+            draw.text((x + 5, y + 5), text, font=font, fill=(0, 0, 0, 153))
+            # Bold main text with outline
+            draw.text((x, y), text, font=font, fill=fill, stroke_width=stroke_width, stroke_fill=stroke_color)
+
+        def draw_wrapped_text(draw, text, font, fill, center_x, center_y, max_width=30, line_spacing=10, stroke_width=4, stroke_color="black"):
+            lines = textwrap.wrap(text, width=max_width)
+            total_height = 0
+            line_heights = []
+            for line in lines:
+                bbox = draw.textbbox((0, 0), line, font=font)
+                w = bbox[2] - bbox[0]
+                h = bbox[3] - bbox[1]
+                line_heights.append((w, h))
+                total_height += h
+            total_height += line_spacing * (len(lines) - 1)
+            
+            curr_y = center_y - total_height / 2
+            for i, line in enumerate(lines):
+                w, h = line_heights[i]
+                lx = center_x - w / 2
+                # Heavy drop shadow
+                draw.text((lx + 5, curr_y + 5), line, font=font, fill=(0, 0, 0, 153))
+                # Bold main text
+                draw.text((lx, curr_y), line, font=font, fill=fill, stroke_width=stroke_width, stroke_fill=stroke_color)
+                curr_y += h + line_spacing
+
+        print(f"[Pillow] Rendering {total_frames} frames asynchronously in memory...")
+        render_frames_start = time.perf_counter()
+        
+        for f_idx in range(total_frames):
+            t = f_idx / fps
+            
+            # Background handled by FFmpeg. Start with a purely transparent frame.
+            frame_img = Image.new("RGBA", (1080, 1920), (0, 0, 0, 0))
+            
+            overlay = Image.new("RGBA", (1080, 1920), (0, 0, 0, 0))
+            draw_overlay = ImageDraw.Draw(overlay)
+            
+            if t <= hook_req["duration"]:
+                # Hook Phase
+                x0_box, y0_box = 90, 785
+                x1_box, y1_box = 990, 1135
+                # Bounding box for text anchors with black@0.5 and thick outline border
+                draw_overlay.rectangle([x0_box, y0_box, x1_box, y1_box], fill=(0, 0, 0, 128))
+                draw_overlay.rectangle([x0_box, y0_box, x1_box, y1_box], outline=(0, 0, 0, 255), width=10)
+                
+                temp_composite = Image.alpha_composite(frame_img, overlay)
+                draw_comp = ImageDraw.Draw(temp_composite)
+                draw_wrapped_text(draw_comp, quiz_data.get("hook", ""), font_hook, "white", 540, 960, max_width=30)
+                frame_img = temp_composite
+                
+            elif t >= outro_req["start_time"]:
+                # Outro Phase
+                x0_box, y0_box = 90, 422
+                x1_box, y1_box = 990, 1202
+                # Bounding box for text anchors with black@0.5 and thick outline border
+                draw_overlay.rectangle([x0_box, y0_box, x1_box, y1_box], fill=(0, 0, 0, 128))
+                draw_overlay.rectangle([x0_box, y0_box, x1_box, y1_box], outline=(0, 0, 0, 255), width=10)
+                
+                temp_composite = Image.alpha_composite(frame_img, overlay)
+                draw_comp = ImageDraw.Draw(temp_composite)
+                
+                l1_text = "For more quizzes,"
+                draw_shadowed_text(draw_comp, (540 - draw_comp.textlength(l1_text, font=font_outro_l1)/2, 600), l1_text, font=font_outro_l1, fill="white", stroke_width=4)
+                
+                l2_text = "SUBSCRIBE!"
+                draw_shadowed_text(draw_comp, (540 - draw_comp.textlength(l2_text, font=font_outro_l2)/2, 850), l2_text, font=font_outro_l2, fill=(255, 223, 0), stroke_width=5)
+                
+                l3_text = "And comment your score below! 👇"
+                draw_shadowed_text(draw_comp, (540 - draw_comp.textlength(l3_text, font=font_outro_l3)/2, 1100), l3_text, font=font_outro_l3, fill="white", stroke_width=4)
+                
+                frame_img = temp_composite
+                
             else:
-                if current_line:
-                    lines.append(" ".join(current_line))
-                current_line = [word]
-        if current_line:
-            lines.append(" ".join(current_line))
+                # Questions Phase
+                active_q_idx = None
+                q_req_idx = 1
+                for idx, q in enumerate(questions):
+                    q_req = tts_requests[q_req_idx]
+                    q_req_idx += 1
+                    a_req = tts_requests[q_req_idx]
+                    q_req_idx += 1
+                    
+                    exp_req = None
+                    exp_narr = q.get("explanation", "").strip() if not is_rapid else ""
+                    if exp_narr:
+                        exp_req = tts_requests[q_req_idx]
+                        q_req_idx += 1
+                        
+                    q_start = q_req["start_time"]
+                    q_block_end = exp_req["start_time"] + exp_req["duration"] if exp_req else a_req["start_time"] + a_req["duration"]
+                    
+                    if q_start <= t <= q_block_end:
+                        active_q_idx = idx
+                        active_q = q
+                        active_q_req = q_req
+                        active_a_req = a_req
+                        active_exp_req = exp_req
+                        active_q_start = q_start
+                        active_q_block_end = q_block_end
+                        break
+                        
+                if active_q_idx is not None:
+                    num = active_q_idx + 1
+                    
+                    # 1. Question card with black@0.5 anchor base and border
+                    draw_overlay.rectangle([40, 218, 1040, 528], fill=(0, 0, 0, 128))
+                    draw_overlay.rectangle([40, 218, 1040, 528], outline=(0, 0, 0, 255), width=10)
+                    
+                    # 2. Options layout
+                    options = active_q["options"]
+                    correct_idx = active_q.get("answerIndex", -1)
+                    correct_answer = active_q.get("answer", "")
+                    if correct_idx == -1:
+                        for oidx, opt in enumerate(options):
+                            if opt.strip() == correct_answer.strip():
+                                correct_idx = oidx
+                                break
+                    if correct_idx == -1:
+                        correct_idx = 0
+                        
+                    opt_labels = ["A", "B", "C", "D"]
+                    
+                    is_think_phase = active_q["think_start"] <= t <= active_q["think_end"]
+                    is_answer_phase = t > active_q["think_end"]
+                    
+                    for oidx in range(len(options)):
+                        opt_y = 680 + oidx * 160
+                        x0_box, y0_box, x1_box, y1_box = 90, opt_y, 990, opt_y + 120
+                        
+                        if is_answer_phase:
+                            # Stage 2: Correct/incorrect highlighting (high retention, 80% opacity fill)
+                            if oidx == correct_idx:
+                                box_color = (46, 204, 113, 204) # green@0.8
+                                border_color = (0, 255, 0, 255)
+                                text_color = "white"
+                                border_w = 6
+                            else:
+                                box_color = (231, 76, 60, 51) # red@0.2
+                                border_color = (192, 57, 43, 102)
+                                text_color = "gray"
+                                border_w = 2
+                        else:
+                            # Stage 1: Active options base (black@0.5 fill and outline)
+                            box_color = (0, 0, 0, 128)
+                            border_color = (255, 255, 255, 77)
+                            text_color = "white"
+                            border_w = 4
+                            
+                        draw_overlay.rectangle([x0_box, y0_box, x1_box, y1_box], fill=box_color)
+                        draw_overlay.rectangle([x0_box, y0_box, x1_box, y1_box], outline=border_color, width=border_w)
+                        
+                    # 3. Think phase progress bar
+                    if is_think_phase:
+                        think_start = active_q["think_start"]
+                        think_duration = active_q["think_duration"]
+                        
+                        # Bar background
+                        draw_overlay.rectangle([90, 538, 990, 562], fill=(34, 34, 34, 204))
+                        
+                        # Bar fill
+                        ratio = 1.0 - (t - think_start) / think_duration
+                        active_w = int(900 * max(0.0, min(1.0, ratio)))
+                        if active_w > 0:
+                            draw_overlay.rectangle([90, 538, 90 + active_w, 562], fill=(168, 85, 247, 255))
+                            
+                    # 4. Explanation box with black@0.5 anchor base and border
+                    if is_answer_phase and active_exp_req:
+                        exp_start = active_exp_req["start_time"]
+                        exp_end = exp_start + active_exp_req["duration"]
+                        if exp_start <= t <= exp_end:
+                            draw_overlay.rectangle([90, 1632, 990, 1812], fill=(0, 0, 0, 128))
+                            draw_overlay.rectangle([90, 1632, 990, 1812], outline=(0, 0, 0, 255), width=10)
+                            
+                    temp_composite = Image.alpha_composite(frame_img, overlay)
+                    draw_comp = ImageDraw.Draw(temp_composite)
+                    
+                    # 5. Draw text elements on the composite frame with shadows and borders
+                    header_text = f"Question {num}/{len(questions)} ({active_q.get('difficulty', 'medium').upper()})"
+                    draw_shadowed_text(draw_comp, (540 - draw_comp.textlength(header_text, font=font_header)/2, 228), header_text, font=font_header, fill=(255, 223, 0), stroke_width=4)
+                    
+                    draw_wrapped_text(draw_comp, active_q["question"], font_question, "white", 540, 388, max_width=28, stroke_width=4)
+                    
+                    # Option text
+                    for oidx in range(len(options)):
+                        opt_y = 680 + oidx * 160
+                        opt_text = f"{opt_labels[oidx]}. {options[oidx]}"
+                        text_color = "white" if not is_answer_phase or oidx == correct_idx else "gray"
+                        draw_wrapped_text(draw_comp, opt_text, font_option, text_color, 540, opt_y + 60, max_width=38, stroke_width=4)
+                        
+                    # Think phase countdown number
+                    if is_think_phase:
+                        think_end = active_q["think_end"]
+                        cnt_num = int(math.ceil(think_end - t))
+                        if cnt_num < 1: cnt_num = 1
+                        cnt_str = str(cnt_num)
+                        draw_shadowed_text(draw_comp, (540 - draw_comp.textlength(cnt_str, font=font_cnt)/2, 574), cnt_str, font=font_cnt, fill="white", stroke_width=4)
+                        
+                    # Explanation text
+                    if is_answer_phase and active_exp_req:
+                        exp_start = active_exp_req["start_time"]
+                        exp_end = exp_start + active_exp_req["duration"]
+                        if exp_start <= t <= exp_end:
+                            draw_wrapped_text(draw_comp, active_q.get("explanation", ""), font_exp, "white", 540, 1722, max_width=30, stroke_width=4)
+                            
+                    frame_img = temp_composite
+                    
+            # Feature 6: Stamp brand watermark on frame if configured
+            if _brand_text and _font_watermark:
+                final_draw = frame_img
+                if final_draw.mode != "RGBA":
+                    final_draw = final_draw.convert("RGBA")
+                wm_layer = Image.new("RGBA", final_draw.size, (0, 0, 0, 0))
+                wm_draw = ImageDraw.Draw(wm_layer)
+                wm_bbox = wm_draw.textbbox((0, 0), _brand_text, font=_font_watermark)
+                wm_w = wm_bbox[2] - wm_bbox[0]
+                wm_h = wm_bbox[3] - wm_bbox[1]
+                margin = 28
+                if _brand_pos == "top_left":
+                    wm_x, wm_y = margin, margin
+                elif _brand_pos == "top_right":
+                    wm_x, wm_y = 1080 - wm_w - margin, margin
+                elif _brand_pos == "bottom_left":
+                    wm_x, wm_y = margin, 1920 - wm_h - margin
+                else:  # bottom_right
+                    wm_x, wm_y = 1080 - wm_w - margin, 1920 - wm_h - margin
+                # Draw shadow + colored text
+                wm_draw.text((wm_x + 2, wm_y + 2), _brand_text, font=_font_watermark, fill=(0, 0, 0, 120))
+                wm_draw.text((wm_x, wm_y), _brand_text, font=_font_watermark, fill=_brand_color_rgba)
+                frame_img = Image.alpha_composite(final_draw, wm_layer)
 
-        bbox = draw.textbbox((0, 0), "Hg", font=font)
-        line_height = bbox[3] - bbox[1] + 12
-        total_height = len(lines) * line_height
-        y_start = y_center - (total_height / 2)
-
-        for idx, line in enumerate(lines):
-            y = y_start + idx * line_height
-            draw.text((target_w / 2, y), line, font=font, fill=fill_color, stroke_width=2, stroke_fill=(0, 0, 0), anchor="mm")
-
-    def draw_option_card(draw, text, y_pos, font, fill_color, border_color=(80, 80, 80), opacity=1.0, glow=False):
-        card_w = target_w * 0.85
-        card_h = 64
-        x1 = (target_w - card_w) / 2
-        y1 = y_pos - card_h / 2
-        x2 = x1 + card_w
-        y2 = y1 + card_h
-
-        alpha = int(255 * opacity)
-
-        if glow:
-            for stroke in range(1, 6):
-                glow_alpha = int((80 / stroke) * opacity)
-                draw.rounded_rectangle([x1 - stroke, y1 - stroke, x2 + stroke, y2 + stroke], radius=10, outline=(46, 204, 113, glow_alpha), width=1)
-
-        bg_color = (25, 25, 25, alpha) if not glow else (46, 204, 113, int(40 * opacity))
-        draw.rounded_rectangle([x1, y1, x2, y2], radius=10, fill=bg_color, outline=border_color + (alpha,), width=2)
-        draw.text((target_w / 2, y_pos), text, font=font, fill=fill_color + (alpha,), stroke_width=1, stroke_fill=(0, 0, 0, alpha), anchor="mm")
-
-    bg_img = Image.open(str(bg_path)).convert("RGBA").resize((target_w, target_h))
-
-    def make_frame(t):
-        frame_img = bg_img.copy()
-        draw = ImageDraw.Draw(frame_img, "RGBA")
-
-        active_event = None
-        for ev in events:
-            if ev["start"] <= t <= ev["end"]:
-                active_event = ev
-                break
-        if not active_event:
-            active_event = events[0]
-            for ev in events:
-                if ev["start"] <= t:
-                    active_event = ev
-                else:
-                    break
-
-        if active_event["type"] == "hook":
-            draw_wrapped_text(draw, active_event["text"], font_hook, (255, 255, 255), target_w * 0.85, target_h * 0.5)
-        elif active_event["type"] == "outro":
-            draw_wrapped_text(draw, "How many did you get right?", font_hook, (255, 255, 255), target_w * 0.85, target_h * 0.42)
-            draw_wrapped_text(draw, "Comment your score below!", font_hook, (255, 223, 0), target_w * 0.85, target_h * 0.58)
-        elif active_event["type"] == "explanation":
-            q_num = active_event["q_num"]
-            diff_str = active_event['difficulty'].upper()
-
-            card_w = target_w * 0.85
-            card_h = 56
-            x1 = (target_w - card_w) / 2
-            y1 = 40
-            x2 = x1 + card_w
-            y2 = y1 + card_h
+            out_frame_path = frames_dir / f"frame_{f_idx:05d}.png"
+            frame_img.save(out_frame_path, "PNG")
+            created_files.add(out_frame_path)
             
-            draw.rounded_rectangle([x1, y1, x2, y2], radius=8, fill=(15, 15, 15, 180), outline=(80, 80, 80, 180), width=1)
+        print(f"[PERF METRIC - PILLOW]: Rendered {total_frames} frames in {time.perf_counter() - render_frames_start:.2f} seconds.")
+        
+        # Build clean audio-only filter graph
+        # Video filters: Background flag (0:v) scaled to fit without aspect ratio distortion, then transparent text frames (1:v) overlaid
+        filter_parts.append("[0:v]scale=-1:1920,crop=1080:1920:exact=1,setsar=1[bg_scaled]")
+        filter_parts.append("[bg_scaled][1:v]overlay=0:0:shortest=1[v_out]")
+
+        # Build clean audio-only filter graph
+        filter_complex_file = shm_dir / f"quiz_{job_id}_filter.txt"
+        filter_complex_file.write_text(";".join(filter_parts), encoding="utf-8")
+        created_files.add(filter_complex_file)
+        
+        # Build clean FFmpeg sequence concatenation command
+        ffmpeg_cmd = [
+            ffmpeg_exe,
+            "-y",
+            "-loop", "1",
+            "-framerate", str(fps),
+            "-i", str(flag_bg_path),
+            "-f", "image2",
+            "-framerate", str(fps),
+            "-i", str(frames_dir / "frame_%05d.png"),
+        ]
+        for req in tts_requests:
+            ffmpeg_cmd.extend(["-i", str(req["mp3"])])
             
-            q_label = f"Question {q_num}/10 ({diff_str})"
-            draw.text((x1 + 16, y1 + card_h / 2), q_label, font=font_small, fill=(240, 240, 240), stroke_width=1, stroke_fill=(0, 0, 0), anchor="lm")
+        ffmpeg_cmd.extend(["-i", str(audio_assets["pop"])])
+        ffmpeg_cmd.extend(["-i", str(audio_assets["ding"])])
+        ffmpeg_cmd.extend(["-stream_loop", "-1", "-i", str(audio_assets["bgm"])])
+        
+        ffmpeg_cmd.extend([
+            "-filter_complex_script", str(filter_complex_file),
+            "-map", "[v_out]",
+            "-map", "[a_mixed]",
+            "-c:v", "libx264",
+            "-preset", "ultrafast",
+            "-threads", "0",
+            "-c:a", "aac",
+            "-b:a", "192k",
+            "-t", f"{total_duration:.3f}",
+            "-shortest",
+            str(out_final)
+        ])
+        
+        print(f"[FFmpeg] Rendering to local file: {out_final}")
+        result_proc = subprocess.run(
+            ffmpeg_cmd,
+            capture_output=True,
+            text=True,
+        )
+        if result_proc.returncode != 0:
+            print(f"[FFmpeg] Error:\n{result_proc.stderr[-3000:]}")
+            raise RuntimeError(f"FFmpeg exited with code {result_proc.returncode}")
             
-            score_label = "Can You Reach 10/10?"
-            draw.text((x2 - 16, y1 + card_h / 2), score_label, font=font_small, fill=(255, 223, 0), stroke_width=1, stroke_fill=(0, 0, 0), anchor="rm")
+        print(f"[FFmpeg] Render complete. File size: {out_final.stat().st_size / (1024*1024):.2f} MB")
+        timings["step4_render_sec"] = time.perf_counter() - ffmpeg_start
 
-            draw_wrapped_text(draw, active_event["question"], font_large, (255, 255, 255), target_w * 0.85, target_h * 0.32)
+        # Upload to Cloudinary
+        from datetime import datetime
+        import re
+        now = datetime.now()
+        date_folder = now.strftime("%Y-%m-%d")
+        time_str = now.strftime("%H-%M-%S")
+        
+        country_clean = str(job.get("country") or job.get("quizData", {}).get("country") or "Default").strip().replace(" ", "_")
+        country_clean = re.sub(r'[^a-zA-Z0-9_]', '', country_clean)
+        
+        difficulty_clean = str(job.get("difficulty") or (questions[0].get("difficulty") if questions and len(questions) > 0 else None) or "Medium").strip().capitalize()
+        difficulty_clean = re.sub(r'[^a-zA-Z0-9_]', '', difficulty_clean)
+        
+        version_clean = str(job.get("version") or "1").strip()
+        version_clean = re.sub(r'[^a-zA-Z0-9_]', '', version_clean)
+        
+        folder_path = f"geo_quiz_factory/{date_folder}"
+        public_id_str = f"{country_clean}_{difficulty_clean}_Batch_{version_clean}_{time_str}"
 
-            options = active_event["options"]
-            correct_answer = active_event["answer"]
-            correct_idx = -1
-            for idx, opt in enumerate(options):
-                if opt.strip() == correct_answer.strip():
-                    correct_idx = idx
-                    break
-            
-            opt_labels = ["A", "B", "C"]
-            label_text = f"{opt_labels[correct_idx]}. {correct_answer}" if correct_idx != -1 else correct_answer
-            draw_option_card(draw, label_text, target_h * 0.54, font_opt_bold, (46, 204, 113), border_color=(46, 204, 113), glow=True)
+        video_url = None
+        thumbnail_url = None
 
-            exp_w = target_w * 0.85
-            exp_h = 160
-            ex1 = (target_w - exp_w) / 2
-            ey1 = target_h * 0.74 - exp_h / 2
-            ex2 = ex1 + exp_w
-            ey2 = ey1 + exp_h
+        try:
+            print(f"[Cloudinary] Uploading video to {folder_path}/{public_id_str} ...")
+            upload_res = cloudinary.uploader.upload(
+                str(out_final),
+                resource_type="video",
+                folder=folder_path,
+                public_id=public_id_str,
+                overwrite=True,
+            )
+            video_url = upload_res.get("secure_url")
+            print(f"[Cloudinary] Video uploaded: {video_url}")
+        except Exception as cu_err:
+            print(f"[Cloudinary] Video upload failed: {cu_err}. Falling back to static serve.")
 
-            draw.rounded_rectangle([ex1, ey1, ex2, ey2], radius=12, fill=(20, 20, 20, 220), outline=(255, 223, 0, 200), width=2)
-            draw.text((target_w / 2, ey1 + 25), "EXPLANATION / DID YOU KNOW?", font=font_small, fill=(255, 223, 0), stroke_width=1, stroke_fill=(0, 0, 0), anchor="mm")
-            draw_wrapped_text(draw, active_event["explanation"], font_opt, (240, 240, 240), exp_w * 0.9, ey1 + 95)
-        else:
-            q_num = active_event["q_num"]
-            diff_str = active_event['difficulty'].upper()
+        # Upload thumbnail to Cloudinary
+        try:
+            if out_thumbnail.exists():
+                thumb_res = cloudinary.uploader.upload(
+                    str(out_thumbnail),
+                    resource_type="image",
+                    folder=folder_path,
+                    public_id=f"{public_id_str}_thumb",
+                    overwrite=True,
+                )
+                thumbnail_url = thumb_res.get("secure_url")
+                print(f"[Cloudinary] Thumbnail uploaded: {thumbnail_url}")
+        except Exception as tu_err:
+            print(f"[Cloudinary] Thumbnail upload failed: {tu_err}")
 
-            card_w = target_w * 0.85
-            card_h = 56
-            x1 = (target_w - card_w) / 2
-            y1 = 40
-            x2 = x1 + card_w
-            y2 = y1 + card_h
-            
-            draw.rounded_rectangle([x1, y1, x2, y2], radius=8, fill=(15, 15, 15, 180), outline=(80, 80, 80, 180), width=1)
-            
-            q_label = f"Question {q_num}/10 ({diff_str})"
-            draw.text((x1 + 16, y1 + card_h / 2), q_label, font=font_small, fill=(240, 240, 240), stroke_width=1, stroke_fill=(0, 0, 0), anchor="lm")
-            
-            score_label = "Can You Reach 10/10?"
-            draw.text((x2 - 16, y1 + card_h / 2), score_label, font=font_small, fill=(255, 223, 0), stroke_width=1, stroke_fill=(0, 0, 0), anchor="rm")
+        print(f"[PERF METRIC - TOTAL]: Worker total execution time: {time.perf_counter() - total_start:.2f} seconds.")
 
-            draw_wrapped_text(draw, active_event["question"], font_large, (255, 255, 255), target_w * 0.85, target_h * 0.35)
+        return {
+            "subtitleOverlay": "WORKING",
+            "renderProfile": "FAST_QUIZ",
+            "fps": 18,
+            "resolution": "1080x1920",
+            "videoDuration": total_duration,
+            "videoUrl": video_url,
+            "thumbnailUrl": thumbnail_url,
+        }
 
-            options = active_event["options"]
-            correct_answer = active_event["answer"]
-
-            correct_idx = -1
-            for idx, opt in enumerate(options):
-                if opt.strip() == correct_answer.strip():
-                    correct_idx = idx
-                    break
-
-            opt_y_starts = [target_h * 0.65, target_h * 0.74, target_h * 0.83]
-            opt_labels = ["A", "B", "C"]
-
-            if active_event["type"] == "question":
-                for idx, opt in enumerate(options):
-                    draw_option_card(draw, f"{opt_labels[idx]}. {opt}", opt_y_starts[idx], font_opt, (255, 255, 255))
-            elif active_event["type"] == "think":
-                elapsed = t - active_event["start"]
-                duration = active_event["end"] - active_event["start"]
-
-                for idx, opt in enumerate(options):
-                    draw_option_card(draw, f"{opt_labels[idx]}. {opt}", opt_y_starts[idx], font_opt, (255, 255, 255))
-
-                progress_w = target_w * 0.5
-                progress_h = 12
-                px1 = (target_w - progress_w) / 2
-                py1 = target_h * 0.51 - progress_h / 2
-                px2 = px1 + progress_w
-                py2 = py1 + progress_h
-
-                draw.rounded_rectangle([px1, py1, px2, py2], radius=6, fill=(30, 30, 30, 200), outline=(80, 80, 80, 200), width=1)
-
-                ratio = max(0.0, min(1.0, 1.0 - (elapsed / duration)))
-                if ratio > 0:
-                    draw.rounded_rectangle([px1 + 1, py1 + 1, px1 + 1 + (progress_w - 2) * ratio, py2 - 1], radius=5, fill=(255, 223, 0))
-            elif active_event["type"] == "answer":
-                for idx, opt in enumerate(options):
-                    if idx == correct_idx:
-                        draw_option_card(draw, f"{opt_labels[idx]}. {opt}", opt_y_starts[idx], font_opt_bold, (46, 204, 113), border_color=(46, 204, 113), glow=True)
-                    else:
-                        draw_option_card(draw, f"{opt_labels[idx]}. {opt}", opt_y_starts[idx], font_opt, (150, 150, 150), border_color=(50, 50, 50), opacity=0.3)
-
-        return np.array(frame_img.convert("RGB"))
-
-    thumb_frame_np = make_frame(0.2)
-    Image.fromarray(thumb_frame_np).save(str(out_thumbnail))
-
-    import os
-    threads = os.cpu_count() or 4
-    temp_video = out_final.with_suffix(".temp_v.mp4")
-
-    # Render video track without heavy audio array processing in MoviePy
-    video = VideoClip(frame_function=make_frame, duration=total_duration)
-    video.write_videofile(
-        str(temp_video),
-        fps=18,
-        codec="libx264",
-        audio=False,
-        threads=threads,
-        preset="ultrafast",
-        logger=None,
-    )
-
-    # Mux video and mono WAV audio using a raw FFmpeg stream copy command
-    print(f"[FFmpeg] Muxing video and audio to: {out_final}")
-    _run([
-        ffmpeg_exe,
-        "-i", str(temp_video),
-        "-i", str(out_audio),
-        "-c:v", "copy",
-        "-c:a", "aac",
-        "-y",
-        str(out_final)
-    ])
-
-    try:
-        temp_video.unlink()
-    except Exception:
-        pass
-    print("[STEP 4] final.mp4 complete")
-    timings["step4_render_sec"] = time.time() - step4_start
-
-    try:
-        shutil.rmtree(str(temp_dir), ignore_errors=True)
-    except Exception:
-        pass
-
-    return {
-        "subtitleOverlay": "WORKING",
-        "renderProfile": "FAST_QUIZ",
-        "fps": 18,
-        "resolution": "540x960",
-        "videoDuration": total_duration,
-    }
+    finally:
+        # Strict memory hygiene: remove all files created in the RAM disk /dev/shm
+        print("[Cleanup] Running absolute memory hygiene cleanup...")
+        for p in created_files:
+            if p.exists():
+                try:
+                    p.unlink()
+                    print(f"[Cleanup] Cleaned up shm file: {p}")
+                except Exception as clean_err:
+                    print(f"[Cleanup] Error unlinking shm file {p}: {clean_err}")
+        # Clean up temp directory if it exists and is empty
+        if temp_dir.exists():
+            try:
+                shutil.rmtree(str(temp_dir), ignore_errors=True)
+            except Exception:
+                pass
 
 
 def main() -> None:
     start_time = time.time()
-
     parser = argparse.ArgumentParser(
         description="Hybrid short generator: images + voice + captions -> final.mp4"
     )
@@ -1432,7 +1633,7 @@ def main() -> None:
     script_parent = Path(__file__).resolve().parent
     engine_root = script_parent.parent
     if "vps-rendering-engine" in str(script_parent.resolve()):
-        out_dir = job_path.parent.parent / job_id
+        out_dir = job_path.parent / job_id
     else:
         out_dir = job_path.parent.parent / "local-ai" / "output" / job_id
 
@@ -1443,212 +1644,261 @@ def main() -> None:
     out_thumbnail = out_dir / "thumbnail.png"
 
     contentType = job.get("contentType", "MOTIVATIONAL")
-    if contentType == "QUIZ_SHORTS":
-        timings = {
-            "step1_images_sec": 0.0,
-            "step2_audio_sec": 0.0,
-            "step3_subtitles_sec": 0.0,
-            "step4_render_sec": 0.0,
-        }
-        try:
+    try:
+        if contentType == "QUIZ_SHORTS":
+            timings = {
+                "step1_images_sec": 0.0,
+                "step2_audio_sec": 0.0,
+                "step3_subtitles_sec": 0.0,
+                "step4_render_sec": 0.0,
+            }
+            # Ensure output directory exists
+            out_dir.mkdir(parents=True, exist_ok=True)
             result = run_quiz_shorts(job, out_dir, out_audio, out_srt, out_final, out_thumbnail, timings)
-            _finalize_render_and_upload(
-                job_id=job_id,
-                out_dir=out_dir,
-                out_final=out_final,
-                out_thumbnail=out_thumbnail,
-                out_srt=out_srt,
-                timings=timings,
-                subtitle_meta={
-                    "subtitleOverlay": result["subtitleOverlay"],
-                    "renderProfile": result["renderProfile"],
-                    "fps": result["fps"],
-                    "resolution": result["resolution"],
-                },
-                probe={"playable": True, "audioDetected": True, "duration": result["videoDuration"]},
-                cache_hits=0,
-                cache_misses=0,
-                is_quiz=True,
-                video_duration=result["videoDuration"],
-                start_time=start_time
+
+            # Quiz already streams directly to Cloudinary — do NOT call _finalize_render_and_upload
+            # (it would try to re-upload a non-existent local file).
+            # Instead write result.json directly here.
+            result_payload = {
+                "jobId": job_id,
+                "status": "completed",
+                "videoUrl": result.get("videoUrl"),
+                "thumbnailUrl": result.get("thumbnailUrl"),
+                "subtitlesUrl": result.get("subtitlesUrl"),
+                "renderProfile": result.get("renderProfile", "FAST_QUIZ"),
+                "fps": result.get("fps", 18),
+                "resolution": result.get("resolution", "1080x1920"),
+                "timings": timings,
+                "cache": {"hits": 0, "misses": 0},
+            }
+            result_json_path = out_dir / "result.json"
+            result_json_path.write_text(
+                json.dumps(result_payload, ensure_ascii=False, indent=2), encoding="utf-8"
             )
-            return
-        except Exception as e:
-            print(f"[ERROR][QUIZ] Quiz rendering failed: {e}")
+            print(f"[Worker] Wrote quiz result.json to {result_json_path}")
+
+            # Update Firestore to completed
             try:
                 _init_firebase()
-                from firebase_admin import firestore
-                db = firestore.client()
-                db.collection("videos").document(job_id).set({"status": "failed", "error": str(e)}, merge=True)
+                from firebase_admin import firestore as _fs
+                _db = _fs.client()
+                _db.collection("videos").document(job_id).set({
+                    "status": "completed",
+                    "videoUrl": result.get("videoUrl"),
+                    "renderProfile": "FAST_QUIZ",
+                    "fps": 18,
+                    "resolution": "1080x1920",
+                }, merge=True)
+            except Exception as _fe:
+                print(f"[Firebase] Warning: could not mark job completed: {_fe}")
+
+            return
+
+        scenes_list = scenes if isinstance(scenes, list) else []
+        if not scenes_list:
+            scenes_list = [{"text": "Scene 1"}, {"text": "Scene 2"}]
+
+        # Ensure output and images directories exist
+        out_dir.mkdir(parents=True, exist_ok=True)
+        images_dir.mkdir(parents=True, exist_ok=True)
+
+        image_paths: list[Path] = []
+        thumbnail_scene_index = 1
+        try:
+            if isinstance(scenes_list, list) and len(scenes_list) > 0:
+                maybe_best = None
+                for sc_i, sc in enumerate(scenes_list, start=1):
+                    if isinstance(sc, dict) and sc.get("bestScene"):
+                        maybe_best = sc_i
+                        break
+                if isinstance(maybe_best, int) and maybe_best >= 1:
+                    thumbnail_scene_index = maybe_best
+        except Exception:
+            thumbnail_scene_index = 1
+
+        timings = {
+            "step1_images_sec": None,
+            "step2_audio_sec": None,
+            "step3_subtitles_sec": None,
+            "step4_render_sec": None,
+        }
+        
+        step1_start = time.time()
+        try:
+            print("[STEP 1] Generating images...")
+            for i, sc in enumerate(scenes_list, start=1):
+                sc_text = ""
+                if isinstance(sc, dict):
+                    sc_text = sc.get("text") or sc.get("contactText") or sc.get("imagePrompt") or ""
+
+                title = sc_text.strip() or (f"{topic} - Scene {i}" if topic else f"Scene {i}")
+                out_png = images_dir / f"scene{i}.png"
+
+                try:
+                    scene_image_prompt = ""
+                    if isinstance(sc, dict):
+                        scene_image_prompt = sc.get("imagePrompt") or sc.get("image_prompt") or ""
+
+                    prompt = _build_flux_scene_prompt(
+                        topic=topic,
+                        scene_text=sc_text,
+                        scene_image_prompt=scene_image_prompt,
+                        style=str(job.get("style", "")),
+                        i=i,
+                    )
+
+                    _generate_or_load_cached_image(
+                        prompt,
+                        out_png=out_png,
+                        width=1024,
+                        height=1024,
+                        steps=4,
+                    )
+                    _preprocess_resize_image(out_png, 1080, 1920)
+                except Exception as e:
+                    print(f"[STEP 1][IMAGE] FLUX failed for scene {i}: {e}")
+                    _write_placeholder_image(out_png, title)
+                    _preprocess_resize_image(out_png, 1080, 1920)
+
+                image_paths.append(out_png)
+
+            print("[STEP 1] Images complete")
+        except Exception as e:
+            print(f"[ERROR][STEP 1] {e}")
+            raise
+        finally:
+            timings["step1_images_sec"] = _log_step_time(1, step1_start)
+
+        tts_text = script.strip()
+        if not tts_text:
+            tts_text = (
+                " ".join(
+                    [
+                        (s.get("text") or s.get("contactText") or "").strip()
+                        for s in scenes_list
+                        if isinstance(s, dict)
+                    ]
+                ).strip()
+                or topic
+            )
+
+        if not tts_text:
+            raise RuntimeError("Job JSON missing script/topic; cannot generate narration.")
+
+        step2_start = time.time()
+        try:
+            _edge_tts(tts_text, out_audio)
+            print("[STEP 2] Audio complete")
+        except Exception as e:
+            print(f"[ERROR][STEP 2] {e}")
+            raise
+        finally:
+            timings["step2_audio_sec"] = _log_step_time(2, step2_start)
+
+        step3_start = time.time()
+        try:
+            _transcribe_to_srt(out_audio, out_srt)
+            print("[STEP 3] Subtitles complete")
+        except Exception as e:
+            print(f"[ERROR][STEP 3] {e}")
+            raise
+        finally:
+            timings["step3_subtitles_sec"] = _log_step_time(3, step3_start)
+
+        thumbnail_scene_img = None
+        try:
+            idx0 = max(0, min(len(image_paths) - 1, thumbnail_scene_index - 1))
+            thumbnail_scene_img = image_paths[idx0]
+        except Exception:
+            thumbnail_scene_img = image_paths[0] if image_paths else None
+
+        out_thumbnail = out_dir / "thumbnail.png"
+        try:
+            if thumbnail_scene_img and thumbnail_scene_img.exists():
+                shutil.copyfile(str(thumbnail_scene_img), str(out_thumbnail))
+            else:
+                _write_placeholder_image(out_thumbnail, "Thumbnail")
+        except Exception as e:
+            print(f"[WARN][THUMBNAIL] Failed to write thumbnail.png: {e}")
+            try:
+                _write_placeholder_image(out_thumbnail, "Thumbnail")
             except Exception:
                 pass
-            raise
 
-    scenes_list = scenes if isinstance(scenes, list) else []
-    if not scenes_list:
-        scenes_list = [{"text": "Scene 1"}, {"text": "Scene 2"}]
-
-    image_paths: list[Path] = []
-    thumbnail_scene_index = 1
-    try:
-        if isinstance(scenes_list, list) and len(scenes_list) > 0:
-            maybe_best = None
-            for sc_i, sc in enumerate(scenes_list, start=1):
-                if isinstance(sc, dict) and sc.get("bestScene"):
-                    maybe_best = sc_i
-                    break
-            if isinstance(maybe_best, int) and maybe_best >= 1:
-                thumbnail_scene_index = maybe_best
-    except Exception:
-        thumbnail_scene_index = 1
-
-    timings = {
-        "step1_images_sec": None,
-        "step2_audio_sec": None,
-        "step3_subtitles_sec": None,
-        "step4_render_sec": None,
-    }
-    
-    step1_start = time.time()
-    try:
-        print("[STEP 1] Generating images...")
-        for i, sc in enumerate(scenes_list, start=1):
-            sc_text = ""
-            if isinstance(sc, dict):
-                sc_text = sc.get("text") or sc.get("contactText") or sc.get("imagePrompt") or ""
-
-            title = sc_text.strip() or (f"{topic} - Scene {i}" if topic else f"Scene {i}")
-            out_png = images_dir / f"scene{i}.png"
-
-            try:
-                scene_image_prompt = ""
-                if isinstance(sc, dict):
-                    scene_image_prompt = sc.get("imagePrompt") or sc.get("image_prompt") or ""
-
-                prompt = _build_flux_scene_prompt(
-                    topic=topic,
-                    scene_text=sc_text,
-                    scene_image_prompt=scene_image_prompt,
-                    style=str(job.get("style", "")),
-                    i=i,
-                )
-
-                _generate_or_load_cached_image(
-                    prompt,
-                    out_png=out_png,
-                    width=1024,
-                    height=1024,
-                    steps=4,
-                )
-                _preprocess_resize_image(out_png, 1080, 1920)
-            except Exception as e:
-                print(f"[STEP 1][IMAGE] FLUX failed for scene {i}: {e}")
-                _write_placeholder_image(out_png, title)
-                _preprocess_resize_image(out_png, 1080, 1920)
-
-            image_paths.append(out_png)
-
-        print("[STEP 1] Images complete")
-    except Exception as e:
-        print(f"[ERROR][STEP 1] {e}")
-        raise
-    finally:
-        timings["step1_images_sec"] = _log_step_time(1, step1_start)
-
-    tts_text = script.strip()
-    if not tts_text:
-        tts_text = (
-            " ".join(
-                [
-                    (s.get("text") or s.get("contactText") or "").strip()
-                    for s in scenes_list
-                    if isinstance(s, dict)
-                ]
-            ).strip()
-            or topic
-        )
-
-    if not tts_text:
-        raise RuntimeError("Job JSON missing script/topic; cannot generate narration.")
-
-    step2_start = time.time()
-    try:
-        _edge_tts(tts_text, out_audio)
-        print("[STEP 2] Audio complete")
-    except Exception as e:
-        print(f"[ERROR][STEP 2] {e}")
-        raise
-    finally:
-        timings["step2_audio_sec"] = _log_step_time(2, step2_start)
-
-    step3_start = time.time()
-    try:
-        _transcribe_to_srt(out_audio, out_srt)
-        print("[STEP 3] Subtitles complete")
-    except Exception as e:
-        print(f"[ERROR][STEP 3] {e}")
-        raise
-    finally:
-        timings["step3_subtitles_sec"] = _log_step_time(3, step3_start)
-
-    thumbnail_scene_img = None
-    try:
-        idx0 = max(0, min(len(image_paths) - 1, thumbnail_scene_index - 1))
-        thumbnail_scene_img = image_paths[idx0]
-    except Exception:
-        thumbnail_scene_img = image_paths[0] if image_paths else None
-
-    out_thumbnail = out_dir / "thumbnail.png"
-    try:
-        if thumbnail_scene_img and thumbnail_scene_img.exists():
-            shutil.copyfile(str(thumbnail_scene_img), str(out_thumbnail))
-        else:
-            _write_placeholder_image(out_thumbnail, "Thumbnail")
-    except Exception as e:
-        print(f"[WARN][THUMBNAIL] Failed to write thumbnail.png: {e}")
+        step4_start = time.time()
+        subtitle_meta = {"subtitleOverlay": "FALLBACK"}
         try:
-            _write_placeholder_image(out_thumbnail, "Thumbnail")
-        except Exception:
-            pass
+            subtitle_meta = _assemble_video(
+                job_id,
+                job.get("renderProfile") or "STANDARD_SHORTS",
+                image_paths,
+                out_audio,
+                out_srt,
+                out_final,
+            )
+            print("[STEP 4] final.mp4 complete")
+        except Exception as e:
+            print(f"[ERROR][STEP 4] {e}")
+            raise
+        finally:
+            timings["step4_render_sec"] = _log_step_time(4, step4_start)
 
-    step4_start = time.time()
-    subtitle_meta = {"subtitleOverlay": "FALLBACK"}
-    try:
-        subtitle_meta = _assemble_video(
-            job_id,
-            job.get("renderProfile") or "STANDARD_SHORTS",
-            image_paths,
-            out_audio,
-            out_srt,
-            out_final,
+        if not out_final.exists() or out_final.stat().st_size < 1024:
+            raise RuntimeError(f"Movie render produced no valid final.mp4: {out_final}")
+
+        probe = _probe_with_ffprobe(out_final)
+
+        _finalize_render_and_upload(
+            job_id=job_id,
+            out_dir=out_dir,
+            out_final=out_final,
+            out_thumbnail=out_thumbnail,
+            out_srt=out_srt,
+            timings=timings,
+            subtitle_meta=subtitle_meta,
+            probe=probe,
+            cache_hits=cache.get("hits", 0),
+            cache_misses=cache.get("misses", 0),
+            is_quiz=False,
+            video_duration=probe.get("duration", None),
+            start_time=start_time
         )
-        print("[STEP 4] final.mp4 complete")
     except Exception as e:
-        print(f"[ERROR][STEP 4] {e}")
+        print(f"[ERROR][GLOBAL] Rendering failed: {e}")
+        try:
+            _init_firebase()
+            from firebase_admin import firestore
+            db = firestore.client()
+            db.collection("videos").document(job_id).set({"status": "failed", "error": str(e)}, merge=True)
+            print(f"[Firebase] Successfully set failed status for job {job_id}")
+        except Exception as fe:
+            print(f"[Firebase] Warning: Failed to set failed status: {fe}")
         raise
     finally:
-        timings["step4_render_sec"] = _log_step_time(4, step4_start)
-
-    if not out_final.exists() or out_final.stat().st_size < 1024:
-        raise RuntimeError(f"Movie render produced no valid final.mp4: {out_final}")
-
-    probe = _probe_with_ffprobe(out_final)
-
-    _finalize_render_and_upload(
-        job_id=job_id,
-        out_dir=out_dir,
-        out_final=out_final,
-        out_thumbnail=out_thumbnail,
-        out_srt=out_srt,
-        timings=timings,
-        subtitle_meta=subtitle_meta,
-        probe=probe,
-        cache_hits=cache.get("hits", 0),
-        cache_misses=cache.get("misses", 0),
-        is_quiz=False,
-        video_duration=probe.get("duration", None),
-        start_time=start_time
-    )
+        print("[Cleanup] Running global finally cleanup block...")
+        temp_dir = out_dir / "temp"
+        if temp_dir.exists():
+            try:
+                shutil.rmtree(str(temp_dir), ignore_errors=True)
+            except Exception:
+                pass
+        images_dir = out_dir / "images"
+        if images_dir.exists():
+            try:
+                shutil.rmtree(str(images_dir), ignore_errors=True)
+            except Exception:
+                pass
+        for local_file in [out_final, out_thumbnail, out_srt, out_audio]:
+            if local_file.exists():
+                try:
+                    local_file.unlink()
+                except Exception:
+                    pass
+        if out_dir.exists():
+            try:
+                os.rmdir(out_dir)
+            except Exception:
+                pass
 
 
 if __name__ == "__main__":

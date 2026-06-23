@@ -50,5 +50,17 @@ yarn-error.log*
 .vercel
 
 # temporary folder named {
-{/
-{
+\{/
+\{
+
+# vps-rendering-engine generated files
+job_*/
+**/job_*/
+output/
+**/output/
+temp/
+**/temp/
+*.mp4
+*.mp3
+*.jpg
+*.png

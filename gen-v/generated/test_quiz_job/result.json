@@ -1,25 +1,20 @@
 {
   "jobId": "test_quiz_job",
   "status": "completed",
-  "sceneFiles": [],
-  "finalVideo": "final.mp4",
-  "thumbnail": "thumbnail.png",
-  "subtitles": "subtitles.srt",
-  "subtitleOverlay": "WORKING",
+  "videoUrl": "https://res.cloudinary.com/drf9ixrr5/video/upload/v1782114435/ai_shorts/quizzes/default/test_quiz_job/final.mp4",
+  "thumbnailUrl": "https://res.cloudinary.com/drf9ixrr5/image/upload/v1782114438/ai_shorts/quizzes/default/test_quiz_job/thumbnail.jpg",
+  "subtitlesUrl": null,
   "renderProfile": "FAST_QUIZ",
   "fps": 18,
-  "resolution": "540x960",
+  "resolution": "1080x1920",
   "timings": {
     "step1_images_sec": 0.0,
-    "step2_audio_sec": 195.88353610038757,
-    "step3_subtitles_sec": 0.0008764266967773438,
-    "step4_render_sec": 58.520055532455444
+    "step2_audio_sec": 0.0,
+    "step3_subtitles_sec": 0.0014340877532958984,
+    "step4_render_sec": 48.49316999997245
   },
   "cache": {
     "hits": 0,
     "misses": 0
-  },
-  "playable": true,
-  "audioDetected": true,
-  "videoDuration": 126.81999999999996
+  }
 }

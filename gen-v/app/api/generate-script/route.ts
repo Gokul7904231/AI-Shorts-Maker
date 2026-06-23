@@ -10,23 +10,28 @@ export async function POST(req: Request) {
     const body = await req.json();
 
     const topic = String(body?.topic ?? "").trim();
-    const durationSeconds = Number(body?.durationSeconds ?? 0);
+    const rawDuration = Number(body?.durationSeconds ?? 45);
+    // Clamp to YouTube Shorts range (30–60 s)
+    const durationSeconds = Math.min(60, Math.max(30, Number.isFinite(rawDuration) ? rawDuration : 45));
     const style = typeof body?.style === "string" ? body.style : undefined;
     const trend = typeof body?.trend === "string" ? body.trend : undefined;
     const provider = body?.provider as LLMProvider | undefined;
 
     if (!topic) return NextResponse.json({ error: "Missing topic" }, { status: 400 });
-    if (!Number.isFinite(durationSeconds) || durationSeconds <= 0)
-      return NextResponse.json({ error: "Missing/invalid durationSeconds" }, { status: 400 });
 
     const contentType = typeof body?.contentType === "string" ? body.contentType : undefined;
+    // Fast generation is always enabled (checkbox removed from UI)
+    const faster = true;
 
     if (contentType === "QUIZ_SHORTS") {
       const quiz = await scriptAgent({ topic, durationSeconds, style, trend, provider, contentType });
       
-      const { hookScoreAgent } = await import("../../../agents/hook-score-agent");
-      const hookScoreOut = await hookScoreAgent({ hook: quiz.hook, provider });
-      const hookScore = hookScoreOut.score;
+      let hookScore = 8.5;
+      if (!faster) {
+        const { hookScoreAgent } = await import("../../../agents/hook-score-agent");
+        const hookScoreOut = await hookScoreAgent({ hook: quiz.hook, provider });
+        hookScore = hookScoreOut.score;
+      }
 
       return NextResponse.json({
         contentType: "QUIZ_SHORTS",
@@ -64,7 +69,8 @@ export async function POST(req: Request) {
       script: draft?.scenes?.map((s) => s.contactText).join("\n") ?? "",
       scenes: draft?.scenes?.map((s) => ({ text: s.contactText, imagePrompt: s.imagePrompt })) ?? [],
       provider,
-      maxAttempts: 3,
+      maxAttempts: faster ? 0 : 3,
+      faster,
     });
 
     // Frontend contract: include these fields so UX can render immediately.

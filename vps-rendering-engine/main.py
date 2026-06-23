@@ -5,16 +5,41 @@ import json
 import time
 import shutil
 import logging
+import asyncio
+import threading
 import subprocess
 from pathlib import Path
+from collections import deque
 from typing import Optional, List, Dict, Any
 from concurrent.futures import ThreadPoolExecutor
 
+# Load .env file from the same directory (if present)
+try:
+    from dotenv import load_dotenv
+    load_dotenv(dotenv_path=Path(__file__).resolve().parent / ".env")
+except ImportError:
+    pass  # python-dotenv not installed; rely on shell environment
+
 from fastapi import FastAPI, BackgroundTasks, HTTPException, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
+
+# Feature 7: Thread-safe in-memory log deque for SSE streaming
+_LOG_DEQUE: deque = deque(maxlen=500)
+_LOG_LOCK = threading.Lock()
+
+class _DequeHandler(logging.Handler):
+    """Appends formatted log records to the shared deque for SSE telemetry."""
+    def emit(self, record: logging.LogRecord):
+        try:
+            msg = self.format(record)
+            with _LOG_LOCK:
+                _LOG_DEQUE.append(msg)
+        except Exception:
+            pass
 
 # Configure Logging
 logging.basicConfig(
@@ -23,6 +48,10 @@ logging.basicConfig(
     handlers=[logging.StreamHandler(sys.stdout)]
 )
 logger = logging.getLogger("render-engine")
+# Attach deque handler to root logger so ALL loggers feed the SSE stream
+_deque_handler = _DequeHandler()
+_deque_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
+logging.getLogger().addHandler(_deque_handler)
 
 app = FastAPI(
     title="VPS Shorts Rendering Engine",
@@ -77,10 +106,18 @@ class SceneInput(BaseModel):
     imagePrompt: Optional[str] = None
 
 class QuizQuestionInput(BaseModel):
-    difficulty: str
+    difficulty: Optional[str] = "medium"
     question: str
     options: List[str] = []
-    answer: str
+    answer: Optional[str] = None
+    answerIndex: Optional[int] = None
+
+# Feature 6: Branding preset schema
+class BrandConfigInput(BaseModel):
+    watermarkText: Optional[str] = None       # e.g. "@ShortsFactory"
+    watermarkPosition: Optional[str] = "top_right"  # top_left, top_right, bottom_left, bottom_right
+    primaryColor: Optional[str] = "#6366f1"   # hex color for overlays
+    logoUrl: Optional[str] = None             # reserved for future use
 
 class RenderJobRequest(BaseModel):
     jobId: Optional[str] = None
@@ -95,6 +132,17 @@ class RenderJobRequest(BaseModel):
     title: Optional[str] = ""
     description: Optional[str] = ""
     hashtags: Optional[List[str]] = []
+    quizData: Optional[Dict[str, Any]] = None
+    durationSeconds: Optional[int] = 45
+    difficulty: Optional[str] = None
+    version: Optional[int] = None
+    batch: Optional[str] = None
+    country: Optional[str] = None
+    flagUrl: Optional[str] = None
+    voiceCode: Optional[str] = None
+    gradingScale: Optional[str] = None
+    # Feature 6: branding preset
+    brandConfig: Optional[BrandConfigInput] = None
 
 # Persistent Storage Helper Functions
 def get_job_path(job_id: str) -> Path:
@@ -137,24 +185,19 @@ def execute_render_task(job_id: str):
         job_payload_path.write_text(json.dumps(job, ensure_ascii=False, indent=2), encoding="utf-8")
         
         # Execute process
-        cmd = [sys.executable, str(script_path), str(job_payload_path)]
+        cmd = [sys.executable, "-u", str(script_path), str(job_payload_path)]
         logger.info(f"[Worker] Spawning: {' '.join(cmd)}")
         
         env = os.environ.copy()
         env["PYTHONIOENCODING"] = "utf-8"
         env["PYTHONUTF8"] = "1"
+        env["PYTHONUNBUFFERED"] = "1"
 
         result = subprocess.run(
             cmd,
-            capture_output=True,
-            text=True,
             env=env,
             check=False
         )
-
-        logger.info(f"[Worker] Subprocess output:\n{result.stdout}")
-        if result.stderr:
-            logger.warning(f"[Worker] Subprocess stderr:\n{result.stderr}")
 
         if result.returncode != 0:
             raise RuntimeError(f"Rendering script exited with code {result.returncode}")
@@ -231,10 +274,11 @@ def render_video(payload: RenderJobRequest, token: str = Depends(verify_token)):
     questions_list = []
     for q in (payload.questions or []):
         questions_list.append({
-            "difficulty": q.difficulty,
+            "difficulty": q.difficulty or "medium",
             "question": q.question,
             "options": q.options,
-            "answer": q.answer
+            "answer": q.answer or (q.options[q.answerIndex] if q.answerIndex is not None and q.answerIndex < len(q.options) else (q.options[0] if q.options else "")),
+            "answerIndex": q.answerIndex,
         })
 
     # Prepare persistent database payload
@@ -247,12 +291,23 @@ def render_video(payload: RenderJobRequest, token: str = Depends(verify_token)):
         "contentType": payload.contentType,
         "hook": payload.hook,
         "questions": questions_list,
+        "quizData": payload.quizData,
         "renderProfile": payload.renderProfile,
         "title": payload.title,
         "description": payload.description,
         "hashtags": payload.hashtags,
+        "durationSeconds": payload.durationSeconds or 45,
         "status": "queued",
-        "createdAt": int(time.time() * 1000)
+        "createdAt": int(time.time() * 1000),
+        "difficulty": payload.difficulty,
+        "version": payload.version,
+        "batch": payload.batch,
+        "country": payload.country or (payload.quizData.get("country") if payload.quizData else None),
+        "flagUrl": payload.flagUrl or (payload.quizData.get("flagUrl") if payload.quizData else None),
+        "voiceCode": payload.voiceCode or (payload.quizData.get("voiceCode") if payload.quizData else None),
+        "gradingScale": payload.gradingScale or (payload.quizData.get("gradingScale") if payload.quizData else None),
+        # Feature 6: pass branding config through to create_short.py
+        "brandConfig": payload.brandConfig.model_dump() if payload.brandConfig else None,
     }
 
     # Persist job JSON
@@ -265,6 +320,44 @@ def render_video(payload: RenderJobRequest, token: str = Depends(verify_token)):
         "videoId": job_id,
         "status": "queued"
     }
+
+# Feature 7: SSE log streaming endpoint
+@app.get("/logs/stream")
+async def stream_logs(request: Request):
+    """
+    Server-Sent Events endpoint that streams live render engine logs
+    from the shared in-memory deque to any connected client.
+    """
+    async def event_generator():
+        last_idx = 0
+        try:
+            while True:
+                if await request.is_disconnected():
+                    logger.info("[SSE] Client disconnected from /logs/stream")
+                    break
+                with _LOG_LOCK:
+                    snapshot = list(_LOG_DEQUE)
+                new_lines = snapshot[last_idx:]
+                last_idx = len(snapshot)
+                for line in new_lines:
+                    # SSE format: data: <payload>\n\n
+                    yield f"data: {json.dumps({'msg': line})}\n\n"
+                if not new_lines:
+                    # Send a heartbeat ping every 2s to keep connection alive
+                    yield f"data: {json.dumps({'ping': True})}\n\n"
+                await asyncio.sleep(2)
+        except asyncio.CancelledError:
+            pass
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
 
 @app.get("/job-status/{job_id}")
 def get_job_status(job_id: str, request: Request):

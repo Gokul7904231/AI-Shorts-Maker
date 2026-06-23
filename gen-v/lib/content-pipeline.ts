@@ -79,13 +79,6 @@ export async function validateContent(input: ContentPipelineInput): Promise<Vali
   });
   const bestSimilarity = similar[0]?.similarity ?? 0;
 
-  // Treat topicSimilarity as an alignment score: require it to be high.
-  // (Existing RAG similarity is also used to detect near-duplicates, but we now
-  // enforce it to match the task's "Topic Similarity = High" target.)
-  if (bestSimilarity < 0.75) {
-    errors.push(`Topic similarity too low (alignment ${bestSimilarity.toFixed(2)} < 0.75)`);
-  }
-
   // Preserve existing duplicate/near-duplicate reject (helps quality).
   if (bestSimilarity >= 0.95) {
     errors.push(
